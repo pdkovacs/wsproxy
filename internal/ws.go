@@ -14,11 +14,11 @@ import (
 )
 
 type connection struct {
-	fromClient  chan string
-	fromBackend chan string
-	connClosed  chan websocket.CloseError
-	closeSlow   func()
-	id          ConnectionID
+	fromClient chan string
+	fromApp    chan string
+	connClosed chan websocket.CloseError
+	closeSlow  func()
+	id         ConnectionID
 }
 
 type wsConnections struct {
@@ -54,21 +54,19 @@ type wsIO interface {
 	Read(ctx context.Context) (string, error)
 }
 
-type onMgsReceivedFunc func(msg string, connectionId ConnectionID) error
+type onMgsReceivedFunc func(c context.Context, msg string) error
 
 func (wsconn *wsConnections) processMessages(
 	ctx context.Context,
-	connectionId ConnectionID,
+	parentLogger zerolog.Logger,
 	wsIo wsIO,
-	onMessageReceived onMgsReceivedFunc,
+	onMessageFromClient onMgsReceivedFunc,
 ) error {
-	logger := zerolog.Ctx(ctx).With().Str("method", "accept").Str("connectionId", string(connectionId)).Logger()
-
+	logger := parentLogger.With().Str("method", "processMessages").Logger()
 	conn := &connection{
-		id:          connectionId,
-		fromClient:  make(chan string),
-		fromBackend: make(chan string, wsconn.connectionMessageBuffer),
-		connClosed:  make(chan websocket.CloseError),
+		fromClient: make(chan string),
+		fromApp:    make(chan string, wsconn.connectionMessageBuffer),
+		connClosed: make(chan websocket.CloseError),
 		closeSlow: func() {
 			wsIo.Close()
 		},
@@ -103,20 +101,24 @@ func (wsconn *wsConnections) processMessages(
 	for {
 		logger.Debug().Msg("about to enter select...")
 		select {
-		case msg := <-conn.fromBackend:
+		case msg := <-conn.fromApp:
 			logger.Debug().Msg("select: msg from backend")
 			err := writeTimeout(ctx, time.Second*5, wsIo, msg)
 			if err != nil {
 				return err
 			}
 		case msg := <-conn.fromClient:
-			onMessageReceived(msg, conn.id)
+			sendToAppErr := onMessageFromClient(ctx, msg)
+			if sendToAppErr != nil {
+				conn.fromApp <- sendToAppErr.Error()
+			}
 		case closeError := <-conn.connClosed:
 			logger.Debug().Err(closeError).Msg("WS connection closing...")
 			if closeError.Code == websocket.StatusNormalClosure {
 				return nil
 			}
-			return fmt.Errorf("socket %v closed abnormaly: %w", connectionId, closeError)
+			logger.Error().Err(closeError).Msg("socket closed abnormaly")
+			return fmt.Errorf("socket closed abnormaly: %w", closeError)
 		case <-ctx.Done():
 			logger.Debug().Msg("select: context is done")
 			return ctx.Err()
@@ -139,21 +141,20 @@ func (wsconn *wsConnections) deleteConnection(conn *connection) {
 	defer delete(wsconn.wsMap, conn.id)
 }
 
-// publish publishes the msg to all subscribers.
 // It never blocks and so messages to slow subscribers
 // are dropped.
-func (wsconn *wsConnections) push(msg string, connId ConnectionID) error {
+func (wsconn *wsConnections) push(ctx context.Context, msg string, connId ConnectionID) error {
 	wsconn.connectionsMu.Lock()
 	defer wsconn.connectionsMu.Unlock()
 
-	wsconn.publishLimiter.Wait(context.Background())
+	wsconn.publishLimiter.Wait(ctx)
 
 	conn, connNotFoundErr := wsconn.getConnection(connId)
 	if connNotFoundErr != nil {
 		return connNotFoundErr
 	}
 
-	conn.fromBackend <- string(msg)
+	conn.fromApp <- string(msg)
 
 	return nil
 }

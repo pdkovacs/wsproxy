@@ -1,8 +1,10 @@
 package test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	wsgw "websocket-gateway/internal"
@@ -16,22 +18,29 @@ import (
 const badCredential = "bad-credential"
 
 const (
-	mockMethodConnecting   = "connecting"
-	mockMethodDisconnected = "disconnected"
+	mockMethodConnect         = "connect"
+	mockMethodDisconnected    = "disconnected"
+	mockMethodMessageReceived = "messageReceived"
 )
 
+type messageJSON map[string]string
+
 type MyMock struct {
-	disconnectListener chan struct{}
+	disconnectNotification chan struct{}
 	mock.Mock
 }
 
-func (m *MyMock) connecting(headerKey string, connectionId string) {
+func (m *MyMock) connect(headerKey string, connectionId string) {
 	m.Called(headerKey, connectionId)
 }
 
 func (m *MyMock) disconnected(headerKey string, connectionId string) {
 	m.Called(headerKey, connectionId)
-	m.disconnectListener <- struct{}{}
+	m.disconnectNotification <- struct{}{}
+}
+
+func (m *MyMock) messageReceived(headerKey string, connectionId string, msg messageJSON) {
+	m.Called(headerKey, connectionId, msg)
 }
 
 type mockApplication struct {
@@ -47,7 +56,7 @@ func newMockApp(getWsgwUrl func() string) *mockApplication {
 	return &mockApplication{
 		getWsgwUrl: getWsgwUrl,
 		logger:     logging.Get().With().Str("unit", "mockApplication").Logger(),
-		mockMock:   &MyMock{disconnectListener: make(chan struct{})},
+		mockMock:   &MyMock{disconnectNotification: make(chan struct{})},
 	}
 }
 
@@ -65,7 +74,10 @@ func (m *mockApplication) start() error {
 	}
 
 	go func() {
-		http.Serve(listener, handler)
+		serveErr := http.Serve(listener, handler)
+		if serveErr != nil {
+			m.logger.Error().Err(serveErr)
+		}
 	}()
 
 	m.stop = func() {
@@ -78,7 +90,7 @@ func (m *mockApplication) start() error {
 func (m *mockApplication) resetCalls() {
 	m.mockMock.ExpectedCalls = m.mockMock.ExpectedCalls[:0]
 	m.mockMock.Calls = m.mockMock.Calls[:0]
-	m.mockMock.disconnectListener = make(chan struct{})
+	m.mockMock.disconnectNotification = make(chan struct{})
 }
 
 func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
@@ -88,23 +100,23 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	ws := rootEngine.Group("/ws")
 
 	ws.GET(string(wsgw.ConnectPath), func(g *gin.Context) {
-		logger := logging.CreateMethodLogger(m.logger, "authentication handler")
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "connect-handler").Logger()
 		req := g.Request
 		res := g
 		cred, hasCredHeader := req.Header["Authorization"]
 		logger.Debug().Msgf("Request has authorization header: %v and it is: %s", hasCredHeader, cred)
 		if !hasCredHeader {
-			res.AbortWithError(500, errors.New("authorization header not found"))
+			_ = res.AbortWithError(500, errors.New("authorization header not found"))
 			return
 		}
 		if cred[0] == badCredential {
-			res.AbortWithError(401, errors.New("bad credentials in Authorization header"))
+			_ = res.AbortWithError(401, errors.New("bad credentials in Authorization header"))
 			return
 		}
 
 		connHeaderKey := wsgw.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
-			m.mockMock.connecting(connHeaderKey, connId)
+			m.mockMock.connect(connHeaderKey, connId)
 		}
 
 		res.Status(200)
@@ -119,7 +131,28 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 		}
 	})
 
-	ws.POST("/message-received")
+	ws.POST(string(wsgw.MessagePath), func(g *gin.Context) {
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "message handler").Logger()
+		req := g.Request
+		connHeaderKey := wsgw.ConnectionIDHeaderKey
+		if connId := req.Header.Get(connHeaderKey); connId != "" {
+			bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
+			if readBodyErr != nil {
+				logger.Error().Err(readBodyErr).Send()
+				return
+			}
+			m.mockMock.messageReceived(connHeaderKey, connId, parseMessageJSON(bodyAsBytes))
+		}
+	})
 
 	return rootEngine, nil
+}
+
+func parseMessageJSON(value []byte) messageJSON {
+	message := map[string]string{}
+	unmarshalErr := json.Unmarshal(value, &message)
+	if unmarshalErr != nil {
+		panic(unmarshalErr)
+	}
+	return message
 }

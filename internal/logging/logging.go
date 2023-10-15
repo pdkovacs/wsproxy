@@ -85,6 +85,8 @@ func Get() zerolog.Logger {
 
 		logLevel := parseLevel()
 
+		fmt.Fprintf(os.Stderr, ">>>>>>>>> default log-level: %v\n", logLevel)
+
 		logContext := zerolog.New(output).
 			Level(zerolog.Level(logLevel)).
 			With().
@@ -108,11 +110,3 @@ const (
 	UnitLogger    string = "unit"
 	MethodLogger  string = "method"
 )
-
-func CreateUnitLogger(logger zerolog.Logger, unitName string) zerolog.Logger {
-	return logger.With().Str(UnitLogger, unitName).Logger()
-}
-
-func CreateMethodLogger(logger zerolog.Logger, unitName string) zerolog.Logger {
-	return logger.With().Str(MethodLogger, unitName).Logger()
-}

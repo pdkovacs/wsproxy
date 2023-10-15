@@ -13,7 +13,6 @@ import (
 	"nhooyr.io/websocket"
 
 	wsgw "websocket-gateway/internal"
-	"websocket-gateway/internal/logging"
 )
 
 type baseTestSuite struct {
@@ -21,13 +20,13 @@ type baseTestSuite struct {
 	wsgwServer string
 	mockApp    *mockApplication
 	wsGateway  *wsgw.Server
-	logger     zerolog.Logger
 	nextConnId wsgw.ConnectionID
+	ctx        context.Context
 }
 
-func NewBaseTestSuite(logger zerolog.Logger) *baseTestSuite {
+func NewBaseTestSuite(ctx context.Context) *baseTestSuite {
 	return &baseTestSuite{
-		logger: logger,
+		ctx: ctx,
 	}
 }
 
@@ -48,12 +47,13 @@ func (s *baseTestSuite) startMockApp() {
 }
 
 func (s *baseTestSuite) SetupSuite() {
-	logger := logging.CreateMethodLogger(s.logger, "SetupSuite")
+	logger := zerolog.Ctx(s.ctx).With().Str("method", "SetupSuite").Logger()
 	logger.Info().Msg("BEGIN")
 
 	s.startMockApp()
 
 	server := wsgw.NewServer(
+		s.ctx,
 		wsgw.Config{
 			ServerHost:          "localhost",
 			ServerPort:          0,
@@ -68,11 +68,14 @@ func (s *baseTestSuite) SetupSuite() {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go server.SetupAndStart(func(port int, _ func()) {
-		fmt.Fprint(os.Stderr, "WsGateway is ready!")
-		s.wsgwServer = fmt.Sprintf("localhost:%d", port)
-		wg.Done()
-	})
+	go func() {
+		err := server.SetupAndStart(func(port int, _ func()) {
+			fmt.Fprint(os.Stderr, "WsGateway is ready!")
+			s.wsgwServer = fmt.Sprintf("localhost:%d", port)
+			wg.Done()
+		})
+		logger.Warn().Err(err).Msg("error during server start")
+	}()
 	wg.Wait()
 }
 
@@ -90,7 +93,7 @@ func (s *baseTestSuite) getCall(callIndex int) *mock.Call {
 }
 
 func (s *baseTestSuite) assertArguments(call *mock.Call, objects ...interface{}) {
-	call.Arguments.Assert(s.T(), wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
+	call.Arguments.Assert(s.T(), objects...)
 }
 
 func (s *baseTestSuite) connectToWsgw(ctx context.Context, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
@@ -101,4 +104,8 @@ var defaultDialOptions = &websocket.DialOptions{
 	HTTPHeader: http.Header{
 		"Authorization": []string{"some credentials"},
 	},
+}
+
+func toWsMessage(content string) messageJSON {
+	return messageJSON{"message": content}
 }

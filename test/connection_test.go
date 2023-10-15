@@ -19,11 +19,12 @@ type connectingTestSuite struct {
 }
 
 func TestConnectingTestSuite(t *testing.T) {
-	rootLogger := logging.Get().Level(zerolog.DebugLevel)
+	logger := logging.Get().Level(zerolog.DebugLevel).With().Str("unit", "TestConnectingTestSuite").Logger()
+	ctx := logger.WithContext(context.Background())
 	suite.Run(
 		t,
 		&connectingTestSuite{
-			baseTestSuite: NewBaseTestSuite(logging.CreateUnitLogger(rootLogger, "TestConnectingTestSuite")),
+			baseTestSuite: NewBaseTestSuite(ctx),
 		},
 	)
 }
@@ -33,12 +34,15 @@ func (s *connectingTestSuite) BeforeTest(suiteName string, testName string) {
 }
 
 func (s *connectingTestSuite) TestConnectionID() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsgw.CreateID(s.logger)
+	s.nextConnId = wsgw.CreateID(ctx)
 
-	s.mockApp.mockMock.On(mockMethodConnecting, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
+	message := toWsMessage("hi")
+
+	s.mockApp.mockMock.On(mockMethodConnect, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
+	s.mockApp.mockMock.On(mockMethodMessageReceived, wsgw.ConnectionIDHeaderKey, string(s.nextConnId), message)
 	s.mockApp.mockMock.On(mockMethodDisconnected, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
 
 	s.Len(s.mockApp.mockMock.Calls, 0)
@@ -50,43 +54,44 @@ func (s *connectingTestSuite) TestConnectionID() {
 	}
 	defer func() {
 		c.Close(websocket.StatusNormalClosure, "we're done")
-		<-s.mockApp.mockMock.disconnectListener
+		<-s.mockApp.mockMock.disconnectNotification
 	}()
 
 	callIndex := 0
 	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
 	call := s.getCall((callIndex))
 
-	err = wsjson.Write(ctx, c, "hi")
+	err = wsjson.Write(ctx, c, message)
 	s.NoError(err)
-	s.Equal(mockMethodConnecting, call.Method)
+	s.Equal(mockMethodConnect, call.Method)
 	s.assertArguments(call, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
-	s.Len(s.mockApp.mockMock.Calls, 1)
+	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
 }
 
 func (s *connectingTestSuite) TestConnectingWithInvalidCredentials() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsgw.CreateID(s.logger)
+	s.nextConnId = wsgw.CreateID(ctx)
 
-	_, response, _ := s.connectToWsgw(ctx, &websocket.DialOptions{
+	_, response, wsConnectErr := s.connectToWsgw(ctx, &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"Authorization": []string{badCredential},
 		},
 	})
-	s.Equal(response.StatusCode, 401)
+	s.Error(wsConnectErr)
+	s.Equal(response.StatusCode, http.StatusUnauthorized)
 
 	s.Len(s.mockApp.mockMock.Calls, 0)
 }
 
 func (s *connectingTestSuite) TestDisconnection() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsgw.CreateID(s.logger)
+	s.nextConnId = wsgw.CreateID(ctx)
 
-	s.mockApp.mockMock.On(mockMethodConnecting, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
+	s.mockApp.mockMock.On(mockMethodConnect, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
 	s.mockApp.mockMock.On(mockMethodDisconnected, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
 
 	s.Len(s.mockApp.mockMock.Calls, 0)
@@ -100,11 +105,11 @@ func (s *connectingTestSuite) TestDisconnection() {
 	callIndex := 0
 	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
 	call := s.getCall((callIndex))
-	s.Equal(mockMethodConnecting, call.Method)
+	s.Equal(mockMethodConnect, call.Method)
 	s.assertArguments(call, wsgw.ConnectionIDHeaderKey, string(s.nextConnId))
 
 	c.Close(websocket.StatusNormalClosure, "we're done")
-	<-s.mockApp.mockMock.disconnectListener
+	<-s.mockApp.mockMock.disconnectNotification
 
 	callIndex++
 	call = s.getCall((callIndex))

@@ -1,18 +1,18 @@
-# Websocket gateway
+# Web-socket gateway
 
-Service taking care of the management (and use) of stateful websocket connections on behalf of clustered applications with with stateless backends.
+Service taking care of the management (and use) of stateful web-socket connections on behalf of clustered applications with with stateless back-ends.
 
 ## Endpoints provided by the gateway service
 
 * `GET /connect`
   
-  for client devices to open a websocket connection
+  for client devices to open a web-socket connection
   
 * `POST /message/${connectionId}`
   
-  for application backends to send message over a websocket connection
+  for application back-ends to send message over a web-socket connection
 
-  (Client devices send messages to the backends using the websocket connections between them and the gateway service.)
+  (Client devices send messages to the back-ends using the web-socket connections between them and the gateway service.)
 
 ## Endpoints the gateway service expects the application to provide
 

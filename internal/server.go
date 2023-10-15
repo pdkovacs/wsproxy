@@ -10,6 +10,7 @@ import (
 	"websocket-gateway/internal/logging"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/xid"
 	"github.com/rs/zerolog"
 )
 
@@ -31,22 +32,22 @@ type Config struct {
 type Server struct {
 	Addr               string
 	createConnectionId func() ConnectionID
-	logger             zerolog.Logger
 	listener           net.Listener
 	configuration      Config
+	ctx                context.Context
 }
 
-func NewServer(configuration Config, createConnectionId func() ConnectionID) *Server {
+func NewServer(ctx context.Context, configuration Config, createConnectionId func() ConnectionID) *Server {
 	return &Server{
 		configuration:      configuration,
 		createConnectionId: createConnectionId,
-		logger:             logging.Get().With().Str("unit", "websocketGatewayServer").Logger(),
+		ctx:                ctx,
 	}
 }
 
 // start starts the service
-func (s *Server) start(r http.Handler, ready func(port int, stop func())) {
-	logger := logging.CreateMethodLogger(s.logger, "StartServer")
+func (s *Server) start(r http.Handler, ready func(port int, stop func())) error {
+	logger := zerolog.Ctx(s.ctx).With().Str("method", "start").Logger()
 	logger.Info().Msg("Starting server on ephemeral....")
 	var err error
 
@@ -72,13 +73,13 @@ func (s *Server) start(r http.Handler, ready func(port int, stop func())) {
 		ready(portAsInt, s.Stop)
 	}
 
-	http.Serve(s.listener, r)
+	return http.Serve(s.listener, r)
 }
 
 // SetupAndStart sets up and starts server.
-func (s *Server) SetupAndStart(ready func(port int, stop func())) {
+func (s *Server) SetupAndStart(ready func(port int, stop func())) error {
 	r := createWsGwRequestHandler(s.configuration, s.createConnectionId)
-	s.start(r, ready)
+	return s.start(r, ready)
 }
 
 // For now, we assume that the backend authentication is managed ex-machina by the environment (AWS role or K8S NetworkPolicy
@@ -89,14 +90,9 @@ func authenticateBackend(c *gin.Context) error {
 	return nil
 }
 
-// Calls the `POST /ws/message-received` endpoint on the backend with "msg" and "connectionId"
-func onMessageReceived(msg string, connectionId ConnectionID) error {
-	return nil
-}
-
 // Stop kills the listener
 func (s *Server) Stop() {
-	logger := logging.CreateMethodLogger(s.logger, "ListenerKiller")
+	logger := zerolog.Ctx(s.ctx).With().Str("method", "stop").Logger()
 	logger.Info().Msgf("listener: %v", s.listener)
 	error := s.listener.Close()
 	if error != nil {
@@ -104,7 +100,6 @@ func (s *Server) Stop() {
 	} else {
 		logger.Info().Msg("Listener closed successfully")
 	}
-
 }
 
 func createWsGwRequestHandler(options Config, createConnectionId func() ConnectionID) *gin.Engine {
@@ -125,7 +120,6 @@ func createWsGwRequestHandler(options Config, createConnectionId func() Connecti
 			wsConns,
 			options.LoadBalancerAddress,
 			createConnectionId,
-			onMessageReceived,
 		),
 	)
 
@@ -153,12 +147,15 @@ func (u *appURLs) disconnected() string {
 	return fmt.Sprintf("%s/ws%s", u.baseUrl, DisonnectedPath)
 }
 
-func RequestLogger(unitName string) func(g *gin.Context) {
+func (u *appURLs) message() string {
+	return fmt.Sprintf("%s/ws%s", u.baseUrl, MessagePath)
+}
 
+func RequestLogger(unitName string) func(g *gin.Context) {
 	return func(g *gin.Context) {
 		start := time.Now()
 
-		l := logging.Get()
+		l := logging.Get().With().Str("req_xid", xid.New().String()).Logger()
 
 		r := g.Request
 		g.Request = r.WithContext(l.WithContext(r.Context()))
