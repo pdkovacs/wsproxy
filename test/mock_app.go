@@ -7,8 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	wsgw "websocket-gateway/internal"
-	"websocket-gateway/internal/logging"
+	wsproxy "wsproxy/internal"
+	"wsproxy/internal/logging"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog"
@@ -44,17 +44,17 @@ func (m *MyMock) messageReceived(headerKey string, connectionId string, msg mess
 }
 
 type mockApplication struct {
-	// getWsgwUrl makes available the URL of the WSGS server
-	getWsgwUrl func() string
+	// getWsproxyUrl makes available the URL of the WSGS server
+	getWsproxyUrl func() string
 	listener   net.Listener
 	stop       func()
 	logger     zerolog.Logger
 	mockMock   *MyMock
 }
 
-func newMockApp(getWsgwUrl func() string) *mockApplication {
+func newMockApp(getWsproxyUrl func() string) *mockApplication {
 	return &mockApplication{
-		getWsgwUrl: getWsgwUrl,
+		getWsproxyUrl: getWsproxyUrl,
 		logger:     logging.Get().With().Str("unit", "mockApplication").Logger(),
 		mockMock:   &MyMock{disconnectNotification: make(chan struct{})},
 	}
@@ -95,11 +95,11 @@ func (m *mockApplication) resetCalls() {
 
 func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	rootEngine := gin.Default()
-	rootEngine.Use(wsgw.RequestLogger("mockApplication"))
+	rootEngine.Use(wsproxy.RequestLogger("mockApplication"))
 
 	ws := rootEngine.Group("/ws")
 
-	ws.GET(string(wsgw.ConnectPath), func(g *gin.Context) {
+	ws.GET(string(wsproxy.ConnectPath), func(g *gin.Context) {
 		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "connect-handler").Logger()
 		req := g.Request
 		res := g
@@ -114,7 +114,7 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 			return
 		}
 
-		connHeaderKey := wsgw.ConnectionIDHeaderKey
+		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
 			m.mockMock.connect(connHeaderKey, connId)
 		}
@@ -122,19 +122,19 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 		res.Status(200)
 	})
 
-	ws.POST(string(wsgw.DisonnectedPath), func(g *gin.Context) {
+	ws.POST(string(wsproxy.DisonnectedPath), func(g *gin.Context) {
 		req := g.Request
 
-		connHeaderKey := wsgw.ConnectionIDHeaderKey
+		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
 			m.mockMock.disconnected(connHeaderKey, connId)
 		}
 	})
 
-	ws.POST(string(wsgw.MessagePath), func(g *gin.Context) {
+	ws.POST(string(wsproxy.MessagePath), func(g *gin.Context) {
 		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "message handler").Logger()
 		req := g.Request
-		connHeaderKey := wsgw.ConnectionIDHeaderKey
+		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
 			bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
 			if readBodyErr != nil {

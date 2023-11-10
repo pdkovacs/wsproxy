@@ -1,4 +1,4 @@
-module websocket-gateway
+module wsproxy
 
 go 1.20
 

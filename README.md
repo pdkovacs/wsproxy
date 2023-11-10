@@ -1,8 +1,8 @@
-# Web-socket gateway
+# Web-socket proxy
 
 Service taking care of the management (and use) of stateful web-socket connections on behalf of clustered applications with with stateless back-ends.
 
-## Endpoints provided by the gateway service
+## Endpoints provided by the proxy service
 
 * `GET /connect`
   
@@ -12,9 +12,9 @@ Service taking care of the management (and use) of stateful web-socket connectio
   
   for application back-ends to send message over a web-socket connection
 
-  (Client devices send messages to the back-ends using the web-socket connections between them and the gateway service.)
+  (Client devices send messages to the back-ends using the web-socket connections between them and the proxy service.)
 
-## Endpoints the gateway service expects the application to provide
+## Endpoints the proxy service expects the application to provide
 
 * `GET /ws/connect`
     
@@ -24,8 +24,8 @@ Service taking care of the management (and use) of stateful web-socket connectio
 
 * `POST /ws/disconnected`
 
-  notifies of connections lost by the gateway on a best-effort basis
+  notifies of connections lost by the proxy on a best-effort basis
 
 * `POST /ws/message`
 
-  The gateway service relays to this end-point messages it receives from clients
+  The proxy service relays to this end-point messages it receives from clients

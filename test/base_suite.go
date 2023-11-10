@@ -12,15 +12,15 @@ import (
 	"github.com/stretchr/testify/suite"
 	"nhooyr.io/websocket"
 
-	wsgw "websocket-gateway/internal"
+	wsproxy "wsproxy/internal"
 )
 
 type baseTestSuite struct {
 	suite.Suite
-	wsgwServer string
+	wsproxyServer string
 	mockApp    *mockApplication
-	wsGateway  *wsgw.Server
-	nextConnId wsgw.ConnectionID
+	wsGateway  *wsproxy.Server
+	nextConnId wsproxy.ConnectionID
 	ctx        context.Context
 }
 
@@ -30,15 +30,15 @@ func NewBaseTestSuite(ctx context.Context) *baseTestSuite {
 	}
 }
 
-var connectionIdGenerator = func(getNextId func() wsgw.ConnectionID) func() wsgw.ConnectionID {
-	return func() wsgw.ConnectionID {
+var connectionIdGenerator = func(getNextId func() wsproxy.ConnectionID) func() wsproxy.ConnectionID {
+	return func() wsproxy.ConnectionID {
 		return getNextId()
 	}
 }
 
 func (s *baseTestSuite) startMockApp() {
 	s.mockApp = newMockApp(func() string {
-		return fmt.Sprintf("http://%s", s.wsgwServer)
+		return fmt.Sprintf("http://%s", s.wsproxyServer)
 	})
 	mockAppStartErr := s.mockApp.start()
 	if mockAppStartErr != nil {
@@ -52,15 +52,15 @@ func (s *baseTestSuite) SetupSuite() {
 
 	s.startMockApp()
 
-	server := wsgw.NewServer(
+	server := wsproxy.NewServer(
 		s.ctx,
-		wsgw.Config{
+		wsproxy.Config{
 			ServerHost:          "localhost",
 			ServerPort:          0,
 			AppBaseUrl:          fmt.Sprintf("http://%s", s.mockApp.listener.Addr().String()),
 			LoadBalancerAddress: "",
 		},
-		connectionIdGenerator(func() wsgw.ConnectionID {
+		connectionIdGenerator(func() wsproxy.ConnectionID {
 			return s.nextConnId
 		}),
 	)
@@ -71,7 +71,7 @@ func (s *baseTestSuite) SetupSuite() {
 	go func() {
 		err := server.SetupAndStart(func(port int, _ func()) {
 			fmt.Fprint(os.Stderr, "WsGateway is ready!")
-			s.wsgwServer = fmt.Sprintf("localhost:%d", port)
+			s.wsproxyServer = fmt.Sprintf("localhost:%d", port)
 			wg.Done()
 		})
 		logger.Warn().Err(err).Msg("error during server start")
@@ -96,8 +96,8 @@ func (s *baseTestSuite) assertArguments(call *mock.Call, objects ...interface{})
 	call.Arguments.Assert(s.T(), objects...)
 }
 
-func (s *baseTestSuite) connectToWsgw(ctx context.Context, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
-	return websocket.Dial(ctx, fmt.Sprintf("ws://%s%s", s.wsgwServer, wsgw.ConnectPath), options)
+func (s *baseTestSuite) connectToWsproxy(ctx context.Context, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
+	return websocket.Dial(ctx, fmt.Sprintf("ws://%s%s", s.wsproxyServer, wsproxy.ConnectPath), options)
 }
 
 var defaultDialOptions = &websocket.DialOptions{

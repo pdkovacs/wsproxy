@@ -1,4 +1,4 @@
-package wsgw
+package wsproxy
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"websocket-gateway/internal/logging"
+	"wsproxy/internal/logging"
 
 	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"

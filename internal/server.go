@@ -1,4 +1,4 @@
-package wsgw
+package wsproxy
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
-	"websocket-gateway/internal/logging"
+	"wsproxy/internal/logging"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rs/xid"
@@ -56,7 +56,7 @@ func (s *Server) start(r http.Handler, ready func(port int, stop func())) error 
 		panic(fmt.Sprintf("Error while starting to listen at an ephemeral port: %v", err))
 	}
 	s.Addr = s.listener.Addr().String()
-	logger.Info().Msgf("websocket-gateway instance is listening at %s", s.Addr)
+	logger.Info().Msgf("wsproxy instance is listening at %s", s.Addr)
 
 	_, port, err := net.SplitHostPort(s.listener.Addr().String())
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *Server) start(r http.Handler, ready func(port int, stop func())) error 
 
 // SetupAndStart sets up and starts server.
 func (s *Server) SetupAndStart(ready func(port int, stop func())) error {
-	r := createWsGwRequestHandler(s.configuration, s.createConnectionId)
+	r := createWsproxyRequestHandler(s.configuration, s.createConnectionId)
 	return s.start(r, ready)
 }
 
@@ -102,7 +102,7 @@ func (s *Server) Stop() {
 	}
 }
 
-func createWsGwRequestHandler(options Config, createConnectionId func() ConnectionID) *gin.Engine {
+func createWsproxyRequestHandler(options Config, createConnectionId func() ConnectionID) *gin.Engine {
 	rootEngine := gin.Default()
 
 	rootEngine.Use(RequestLogger("websocketGatewayServer"))
