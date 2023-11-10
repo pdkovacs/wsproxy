@@ -11,7 +11,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/suite"
 	"nhooyr.io/websocket"
-	"nhooyr.io/websocket/wsjson"
 )
 
 type connectingTestSuite struct {
@@ -30,51 +29,58 @@ func TestConnectingTestSuite(t *testing.T) {
 }
 
 func (s *connectingTestSuite) BeforeTest(suiteName string, testName string) {
-	s.mockApp.resetCalls()
+	s.baseTestSuite.BeforeTest(suiteName, testName)
+	logger := s.mockApp.logger.With().Str("method", "BeforeTest").Logger()
+	logger.Debug().Msg("BEGIN")
+	s.mockApp.recordConnectionFromClient = true
+	logger.Debug().Msg("END")
 }
 
 func (s *connectingTestSuite) TestConnectionID() {
 	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsproxy.CreateID(ctx)
+	connId := wsproxy.CreateID(ctx)
+	s.nextConnId = connId
+
+	client := NewClient(s.wsproxyServer, nil)
 
 	message := toWsMessage("hi")
 
-	s.mockApp.mockMock.On(mockMethodConnect, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
-	s.mockApp.mockMock.On(mockMethodMessageReceived, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId), message)
-	s.mockApp.mockMock.On(mockMethodDisconnected, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
+	s.mockApp.expectConnDisconn(connId)
+	s.mockApp.on(mockMethodMessageReceived, connId, message)
 
-	s.Len(s.mockApp.mockMock.Calls, 0)
+	s.Len(s.mockApp.getCalls(connId), 0)
 
-	c, _, err := s.connectToWsproxy(ctx, defaultDialOptions)
+	_, err := client.connect(ctx)
 	s.NoError(err)
 	if err != nil {
 		return
 	}
 	defer func() {
-		c.Close(websocket.StatusNormalClosure, "we're done")
-		<-s.mockApp.mockMock.disconnectNotification
+		client.disconnect(ctx)
+		<-s.mockApp.connMocks[string(connId)].disconnectNotification
 	}()
 
 	callIndex := 0
-	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
-	call := s.getCall((callIndex))
+	s.Len(s.mockApp.getCalls(connId), callIndex+1)
+	call := s.getCall(connId, callIndex)
 
-	err = wsjson.Write(ctx, c, message)
+	err = client.writeMessage(ctx, message)
 	s.NoError(err)
 	s.Equal(mockMethodConnect, call.Method)
-	s.assertArguments(call, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
-	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
 }
 
 func (s *connectingTestSuite) TestConnectingWithInvalidCredentials() {
 	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsproxy.CreateID(ctx)
+	connId := wsproxy.CreateID(ctx)
+	s.nextConnId = connId
 
-	_, response, wsConnectErr := s.connectToWsproxy(ctx, &websocket.DialOptions{
+	client := NewClient(s.wsproxyServer, nil)
+
+	response, wsConnectErr := client.connect(ctx, &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"Authorization": []string{badCredential},
 		},
@@ -82,38 +88,40 @@ func (s *connectingTestSuite) TestConnectingWithInvalidCredentials() {
 	s.Error(wsConnectErr)
 	s.Equal(response.StatusCode, http.StatusUnauthorized)
 
-	s.Len(s.mockApp.mockMock.Calls, 0)
+	s.Len(s.mockApp.getCalls(connId), 0)
 }
 
 func (s *connectingTestSuite) TestDisconnection() {
 	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
 
-	s.nextConnId = wsproxy.CreateID(ctx)
+	connId := wsproxy.CreateID(ctx)
+	s.nextConnId = connId
 
-	s.mockApp.mockMock.On(mockMethodConnect, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
-	s.mockApp.mockMock.On(mockMethodDisconnected, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
+	client := NewClient(s.wsproxyServer, nil)
 
-	s.Len(s.mockApp.mockMock.Calls, 0)
+	s.mockApp.expectConnDisconn(connId)
 
-	c, _, err := s.connectToWsproxy(ctx, defaultDialOptions)
+	s.Len(s.mockApp.getCalls(connId), 0)
+
+	_, err := client.connect(ctx)
 	s.NoError(err)
 	if err != nil {
 		return
 	}
 
-	callIndex := 0
-	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
-	call := s.getCall((callIndex))
-	s.Equal(mockMethodConnect, call.Method)
-	s.assertArguments(call, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
+	s.Equal(connId, client.connectionId)
 
-	c.Close(websocket.StatusNormalClosure, "we're done")
-	<-s.mockApp.mockMock.disconnectNotification
+	callIndex := 0
+	s.Len(s.mockApp.getCalls(connId), callIndex+1)
+	call := s.getCall(connId, callIndex)
+	s.Equal(mockMethodConnect, call.Method)
+
+	client.disconnect(ctx)
+	<-s.mockApp.connMocks[string(connId)].disconnectNotification
 
 	callIndex++
-	call = s.getCall((callIndex))
-	s.Len(s.mockApp.mockMock.Calls, callIndex+1)
+	call = s.getCall(connId, callIndex)
+	s.Len(s.mockApp.getCalls(connId), callIndex+1)
 	s.Equal(mockMethodDisconnected, call.Method)
-	s.assertArguments(call, wsproxy.ConnectionIDHeaderKey, string(s.nextConnId))
 }

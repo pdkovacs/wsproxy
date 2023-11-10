@@ -6,6 +6,9 @@ Service taking care of the management (and use) of stateful web-socket connectio
 
 * `GET /connect`
   
+  Returns `{ connectionId: string }`
+  where `connectionId` is the connection-id assigned by the proxy to the new web-socket connection.
+  
   for client devices to open a web-socket connection
   
 * `POST /message/${connectionId}`

@@ -160,6 +160,18 @@ func handleClientMessage(appConn *appConnection, appUrls applicationURLs) func(c
 	}
 }
 
+func sendMessageToClient(ctx context.Context, wsconn *websocket.Conn, obj any) error {
+	jsonBytes, marshalErr := json.Marshal(obj)
+	if marshalErr != nil {
+		return marshalErr
+	}
+	writeErr := wsconn.Write(ctx, websocket.MessageText, jsonBytes)
+	if writeErr != nil {
+		return writeErr
+	}
+	return nil
+}
+
 // connectHandler calls `authenticateClient` if it is not `nil` to authenticate the client,
 // then notifies the application of the new WS connection
 func connectHandler(
@@ -175,7 +187,7 @@ func connectHandler(
 			return
 		}
 
-		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "authentication handler").Logger()
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "authentication handler").Str("connectionId", string(appConn.id)).Logger()
 
 		// logger = logger.().Str("method", "connectHandler").Str("connectionId", string(appConn.id)).Logger()
 
@@ -188,28 +200,39 @@ func connectHandler(
 			g.AbortWithStatus(500)
 			return
 		}
-		defer wsConn.Close(websocket.StatusNormalClosure, "")
+
+		var wsClosedError error
+		defer func() {
+			wsConn.Close(websocket.StatusNormalClosure, "")
+
+			handleClientDisconnected(appUrls, appConn, logger)
+
+			if wsClosedError != nil {
+				if errors.Is(wsClosedError, context.Canceled) {
+					return // Done
+				}
+
+				if websocket.CloseStatus(wsClosedError) == websocket.StatusNormalClosure ||
+					websocket.CloseStatus(wsClosedError) == websocket.StatusGoingAway {
+					return
+				}
+
+				logger.Error().Msgf("%v", wsClosedError)
+			}
+		}()
+
+		ackErr := sendMessageToClient(g.Request.Context(), wsConn, map[string]string{"connectionId": string(appConn.id)})
+		if ackErr != nil {
+			logger.Error().Err(fmt.Errorf("failed to send connect ack: %v", ackErr))
+			wsClosedError = ackErr
+			return
+		}
 
 		logger.Debug().Msg("websocket message processing about to start...")
 
-		wsClosedError := ws.processMessages(g.Request.Context(), logger, &wsIOAdapter{wsConn}, handleClientMessage(appConn, appUrls)) // we block here until Error or Done
+		wsClosedError = ws.processMessages(g.Request.Context(), appConn.id, &wsIOAdapter{wsConn}, handleClientMessage(appConn, appUrls)) // we block here until Error or Done
+
 		logger.Debug().Msgf("websocket message processing finished with %v", wsClosedError)
-
-		handleClientDisconnected(appUrls, appConn, logger)
-
-		if errors.Is(wsClosedError, context.Canceled) {
-			return // Done
-		}
-
-		if websocket.CloseStatus(wsClosedError) == websocket.StatusNormalClosure ||
-			websocket.CloseStatus(wsClosedError) == websocket.StatusGoingAway {
-			return
-		}
-
-		if wsClosedError != nil {
-			logger.Error().Msgf("%v", wsClosedError)
-			return
-		}
 	}
 }
 
@@ -225,35 +248,29 @@ func pushHandler(authenticateBackend func(c *gin.Context) error, connIdPathParam
 		}
 
 		requestBody, errReadRequest := io.ReadAll(g.Request.Body)
+		g.Request.Body.Close()
 		if errReadRequest != nil {
 			logger.Error().Msgf("failed to read request body %T: %v", g.Request.Body, errReadRequest)
 			g.JSON(500, nil)
 			return
 		}
-		var body interface{}
-		errBodyUnmarshal := json.Unmarshal(requestBody, &body)
-		if errBodyUnmarshal != nil {
-			logger.Error().Msgf("failed to unmarshal request body %T: %v", requestBody, errBodyUnmarshal)
-			g.JSON(400, nil)
-			return
-		}
 
-		bodyAsString, conversionOk := body.(string)
-		if !conversionOk {
-			logger.Error().Msgf("failed to convert request body tp string: %T", requestBody)
-			g.JSON(400, nil)
-			return
-		}
+		bodyAsString := string(requestBody)
 
 		errPush := ws.push(g.Request.Context(), bodyAsString, ConnectionID(connectionIdStr))
 		if errPush == errConnectionNotFound {
-			logger.Error().Msgf("Connection doesn't exist: %s:", connectionIdStr)
+			logger.Error().Msgf("Connection doesn't exist: %s", connectionIdStr)
 			g.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 
-		logger.Error().Msgf("Failed to push to connection %s: %v", connectionIdStr, errPush)
-		g.AbortWithStatus(http.StatusInternalServerError)
+		if errPush != nil {
+			logger.Error().Msgf("Failed to push to connection %s: %v", connectionIdStr, errPush)
+			g.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
+		g.Status(http.StatusNoContent)
 	}
 }
 

@@ -19,18 +19,30 @@ type connection struct {
 	connClosed chan websocket.CloseError
 	closeSlow  func()
 	id         ConnectionID
+	// publishLimiter controls the rate limit applied to the publish endpoint.
+	//
+	// Defaults to one publish every 100ms with a burst of 8.
+	publishLimiter *rate.Limiter
+}
+
+func newConnection(connId ConnectionID, wsIo wsIO, messageBufferSize int) *connection {
+	return &connection{
+		id:         connId,
+		fromClient: make(chan string),
+		fromApp:    make(chan string, messageBufferSize),
+		connClosed: make(chan websocket.CloseError),
+		closeSlow: func() {
+			wsIo.Close()
+		},
+		publishLimiter: rate.NewLimiter(rate.Every(time.Millisecond*100), 8),
+	}
 }
 
 type wsConnections struct {
 	connectionMessageBuffer int
 
-	// publishLimiter controls the rate limit applied to the publish endpoint.
-	//
-	// Defaults to one publish every 100ms with a burst of 8.
-	publishLimiter *rate.Limiter
-
-	connectionsMu sync.Mutex
-	wsMap         map[ConnectionID]*connection
+	wsMapMux sync.Mutex
+	wsMap    map[ConnectionID]*connection
 
 	logger zerolog.Logger
 }
@@ -41,7 +53,6 @@ func newWsConnections() *wsConnections {
 	ns := &wsConnections{
 		connectionMessageBuffer: 16,
 		wsMap:                   make(map[ConnectionID]*connection),
-		publishLimiter:          rate.NewLimiter(rate.Every(time.Millisecond*100), 8),
 		logger:                  logging.Get().With().Str("unit", "notification-server").Logger(),
 	}
 
@@ -58,22 +69,19 @@ type onMgsReceivedFunc func(c context.Context, msg string) error
 
 func (wsconn *wsConnections) processMessages(
 	ctx context.Context,
-	parentLogger zerolog.Logger,
+	connId ConnectionID,
 	wsIo wsIO,
 	onMessageFromClient onMgsReceivedFunc,
 ) error {
-	logger := parentLogger.With().Str("method", "processMessages").Logger()
-	conn := &connection{
-		fromClient: make(chan string),
-		fromApp:    make(chan string, wsconn.connectionMessageBuffer),
-		connClosed: make(chan websocket.CloseError),
-		closeSlow: func() {
-			wsIo.Close()
-		},
-	}
+	logger := zerolog.Ctx(ctx).With().Str("method", "processMessages").Str("connectionId", string(connId)).Logger()
+	conn := newConnection(connId, wsIo, wsconn.connectionMessageBuffer)
 
 	wsconn.addConnection(conn)
-	defer wsconn.deleteConnection(conn)
+	logger.Debug().Msg("connection added")
+	defer func() {
+		wsconn.deleteConnection(conn)
+		logger.Debug().Msg("connection removed")
+	}()
 
 	go func() {
 		for {
@@ -105,20 +113,22 @@ func (wsconn *wsConnections) processMessages(
 			logger.Debug().Msg("select: msg from backend")
 			err := writeTimeout(ctx, time.Second*5, wsIo, msg)
 			if err != nil {
+				logger.Error().Err(err).Msg("select: failed to relay message from app to client")
 				return err
 			}
 		case msg := <-conn.fromClient:
+			logger.Debug().Msg("select: msg from client")
 			sendToAppErr := onMessageFromClient(ctx, msg)
 			if sendToAppErr != nil {
 				conn.fromApp <- sendToAppErr.Error()
 			}
 		case closeError := <-conn.connClosed:
-			logger.Debug().Err(closeError).Msg("WS connection closing...")
+			logger.Debug().Err(closeError).Msg("select: ws connection closing...")
 			if closeError.Code == websocket.StatusNormalClosure {
 				return nil
 			}
-			logger.Error().Err(closeError).Msg("socket closed abnormaly")
-			return fmt.Errorf("socket closed abnormaly: %w", closeError)
+			logger.Error().Err(closeError).Msg("select: socket closed abnormaly")
+			return fmt.Errorf("select: socket closed abnormaly: %w", closeError)
 		case <-ctx.Done():
 			logger.Debug().Msg("select: context is done")
 			return ctx.Err()
@@ -129,39 +139,35 @@ func (wsconn *wsConnections) processMessages(
 
 // addConnection registers a subscriber.
 func (wsconn *wsConnections) addConnection(conn *connection) {
-	wsconn.connectionsMu.Lock()
-	defer wsconn.connectionsMu.Unlock()
+	wsconn.wsMapMux.Lock()
+	defer wsconn.wsMapMux.Unlock()
 	wsconn.wsMap[conn.id] = conn
 }
 
 // deleteConnection deletes the given subscriber.
 func (wsconn *wsConnections) deleteConnection(conn *connection) {
-	wsconn.connectionsMu.Lock()
-	defer wsconn.connectionsMu.Unlock()
+	wsconn.wsMapMux.Lock()
+	defer wsconn.wsMapMux.Unlock()
 	defer delete(wsconn.wsMap, conn.id)
 }
 
 // It never blocks and so messages to slow subscribers
 // are dropped.
 func (wsconn *wsConnections) push(ctx context.Context, msg string, connId ConnectionID) error {
-	wsconn.connectionsMu.Lock()
-	defer wsconn.connectionsMu.Unlock()
-
-	wsconn.publishLimiter.Wait(ctx)
-
 	conn, connNotFoundErr := wsconn.getConnection(connId)
 	if connNotFoundErr != nil {
 		return connNotFoundErr
 	}
 
+	conn.publishLimiter.Wait(ctx)
 	conn.fromApp <- string(msg)
 
 	return nil
 }
 
 func (wsconn *wsConnections) getConnection(connId ConnectionID) (*connection, error) {
-	wsconn.connectionsMu.Lock()
-	defer wsconn.connectionsMu.Unlock()
+	wsconn.wsMapMux.Lock()
+	defer wsconn.wsMapMux.Unlock()
 	conn, ok := wsconn.wsMap[connId]
 	if !ok {
 		return nil, errConnectionNotFound

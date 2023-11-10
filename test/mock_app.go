@@ -7,6 +7,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
+	"time"
 	wsproxy "wsproxy/internal"
 	"wsproxy/internal/logging"
 
@@ -30,33 +33,39 @@ type MyMock struct {
 	mock.Mock
 }
 
-func (m *MyMock) connect(headerKey string, connectionId string) {
-	m.Called(headerKey, connectionId)
+func newClientPeer() *MyMock {
+	return &MyMock{disconnectNotification: make(chan struct{})}
 }
 
-func (m *MyMock) disconnected(headerKey string, connectionId string) {
-	m.Called(headerKey, connectionId)
+func (m *MyMock) connect() {
+	m.Called()
+}
+
+func (m *MyMock) disconnected() {
+	m.Called()
 	m.disconnectNotification <- struct{}{}
 }
 
-func (m *MyMock) messageReceived(headerKey string, connectionId string, msg messageJSON) {
-	m.Called(headerKey, connectionId, msg)
+func (m *MyMock) messageReceived(msg messageJSON) {
+	m.Called(msg)
 }
 
 type mockApplication struct {
 	// getWsproxyUrl makes available the URL of the WSGS server
-	getWsproxyUrl func() string
-	listener   net.Listener
-	stop       func()
-	logger     zerolog.Logger
-	mockMock   *MyMock
+	getWsproxyUrl              func() string
+	listener                   net.Listener
+	stop                       func()
+	logger                     zerolog.Logger
+	connMocks                  map[string]*MyMock
+	connMocksMux               sync.Mutex
+	recordConnectionFromClient bool
 }
 
 func newMockApp(getWsproxyUrl func() string) *mockApplication {
 	return &mockApplication{
 		getWsproxyUrl: getWsproxyUrl,
-		logger:     logging.Get().With().Str("unit", "mockApplication").Logger(),
-		mockMock:   &MyMock{disconnectNotification: make(chan struct{})},
+		logger:        logging.Get().With().Str("unit", "mockApplication").Logger(),
+		connMocks:     make(map[string]*MyMock),
 	}
 }
 
@@ -87,12 +96,6 @@ func (m *mockApplication) start() error {
 	return nil
 }
 
-func (m *mockApplication) resetCalls() {
-	m.mockMock.ExpectedCalls = m.mockMock.ExpectedCalls[:0]
-	m.mockMock.Calls = m.mockMock.Calls[:0]
-	m.mockMock.disconnectNotification = make(chan struct{})
-}
-
 func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	rootEngine := gin.Default()
 	rootEngine.Use(wsproxy.RequestLogger("mockApplication"))
@@ -100,7 +103,7 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	ws := rootEngine.Group("/ws")
 
 	ws.GET(string(wsproxy.ConnectPath), func(g *gin.Context) {
-		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "connect-handler").Logger()
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS connect handler").Logger()
 		req := g.Request
 		res := g
 		cred, hasCredHeader := req.Header["Authorization"]
@@ -116,36 +119,104 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 
 		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
-			m.mockMock.connect(connHeaderKey, connId)
+			m.connMocksMux.Lock()
+			defer m.connMocksMux.Unlock()
+			_, ok := m.connMocks[connId]
+			if !ok {
+				if m.recordConnectionFromClient {
+					logger.Error().Str("connectionId", connId).Msg("connection not mocked")
+				}
+				return
+			}
+			m.connMocks[connId].connect()
 		}
 
 		res.Status(200)
 	})
 
 	ws.POST(string(wsproxy.DisonnectedPath), func(g *gin.Context) {
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS disconnection handler").Logger()
 		req := g.Request
 
 		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
-			m.mockMock.disconnected(connHeaderKey, connId)
+			m.connMocksMux.Lock()
+			defer m.connMocksMux.Unlock()
+			if _, ok := m.connMocks[connId]; !ok {
+				logger.Error().Str("connectionId", connId).Msg("connection not mocked")
+				return
+			}
+			m.connMocks[connId].disconnected()
 		}
 	})
 
 	ws.POST(string(wsproxy.MessagePath), func(g *gin.Context) {
-		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "message handler").Logger()
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS message handler").Logger()
 		req := g.Request
 		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
 			bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
+			req.Body.Close()
 			if readBodyErr != nil {
 				logger.Error().Err(readBodyErr).Send()
 				return
 			}
-			m.mockMock.messageReceived(connHeaderKey, connId, parseMessageJSON(bodyAsBytes))
+
+			m.connMocksMux.Lock()
+			defer m.connMocksMux.Unlock()
+			if _, ok := m.connMocks[connId]; !ok {
+				logger.Error().Str("connectionId", connId).Msg("connection not mocked")
+				return
+			}
+			m.connMocks[connId].messageReceived(parseMessageJSON(bodyAsBytes))
 		}
 	})
 
 	return rootEngine, nil
+}
+
+func (m *mockApplication) on(methodName string, connId wsproxy.ConnectionID, arguments ...any) {
+	m.connMocksMux.Lock()
+	defer m.connMocksMux.Unlock()
+	if _, ok := m.connMocks[string(connId)]; !ok {
+		m.connMocks[string(connId)] = newClientPeer()
+	}
+	m.connMocks[string(connId)].On(methodName, arguments...)
+}
+
+func (s *mockApplication) expectConnDisconn(connId wsproxy.ConnectionID) {
+	s.on(mockMethodConnect, connId)
+	s.on(mockMethodDisconnected, connId)
+}
+
+func (m *mockApplication) getCalls(connId wsproxy.ConnectionID) []mock.Call {
+	m.connMocksMux.Lock()
+	defer m.connMocksMux.Unlock()
+	if _, ok := m.connMocks[string(connId)]; !ok {
+		return []mock.Call{}
+	}
+	return m.connMocks[string(connId)].Calls
+}
+
+func (s *mockApplication) sendToClient(connId wsproxy.ConnectionID, message messageJSON) error {
+	url := fmt.Sprintf("%s%s/%s", s.getWsproxyUrl(), wsproxy.MessagePath, connId)
+	req, createReqErr := http.NewRequest(http.MethodPost, url, strings.NewReader(message["message"]))
+	if createReqErr != nil {
+		return createReqErr
+	}
+	client := http.Client{
+		Timeout: time.Second * 15,
+	}
+	response, sendReqErr := client.Do(req)
+	if sendReqErr != nil {
+		return sendReqErr
+	}
+
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("sending message to client finished with unexpected HTTP status: %v", response.StatusCode)
+	}
+
+	return nil
 }
 
 func parseMessageJSON(value []byte) messageJSON {

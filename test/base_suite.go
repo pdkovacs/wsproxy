@@ -3,36 +3,31 @@ package test
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"nhooyr.io/websocket"
 
 	wsproxy "wsproxy/internal"
 )
 
 type baseTestSuite struct {
 	suite.Suite
-	wsproxyServer string
-	mockApp    *mockApplication
-	wsGateway  *wsproxy.Server
+	wsproxyServer   string
+	ctx             context.Context
+	wsGateway       *wsproxy.Server
+	mockApp         *mockApplication
+	connIdGenerator func() wsproxy.ConnectionID
+	// Fall-back connection-id in case no generator is specified to be used in strictly sequential test cases
+	// testing in isolation the connection setup itself
 	nextConnId wsproxy.ConnectionID
-	ctx        context.Context
 }
 
 func NewBaseTestSuite(ctx context.Context) *baseTestSuite {
 	return &baseTestSuite{
 		ctx: ctx,
-	}
-}
-
-var connectionIdGenerator = func(getNextId func() wsproxy.ConnectionID) func() wsproxy.ConnectionID {
-	return func() wsproxy.ConnectionID {
-		return getNextId()
 	}
 }
 
@@ -60,9 +55,12 @@ func (s *baseTestSuite) SetupSuite() {
 			AppBaseUrl:          fmt.Sprintf("http://%s", s.mockApp.listener.Addr().String()),
 			LoadBalancerAddress: "",
 		},
-		connectionIdGenerator(func() wsproxy.ConnectionID {
-			return s.nextConnId
-		}),
+		func() wsproxy.ConnectionID {
+			if s.connIdGenerator == nil {
+				return s.nextConnId
+			}
+			return s.connIdGenerator()
+		},
 	)
 	s.wsGateway = server
 
@@ -70,7 +68,7 @@ func (s *baseTestSuite) SetupSuite() {
 	wg.Add(1)
 	go func() {
 		err := server.SetupAndStart(func(port int, _ func()) {
-			fmt.Fprint(os.Stderr, "WsGateway is ready!")
+			fmt.Fprint(os.Stderr, "WsGateway is ready!\n")
 			s.wsproxyServer = fmt.Sprintf("localhost:%d", port)
 			wg.Done()
 		})
@@ -88,22 +86,19 @@ func (s *baseTestSuite) TearDownSuite() {
 	}
 }
 
-func (s *baseTestSuite) getCall(callIndex int) *mock.Call {
-	return &s.mockApp.mockMock.Calls[callIndex]
+func (s *baseTestSuite) BeforeTest(suiteName, testName string) {
+	logger := s.mockApp.logger.With().Str("method", "BeforeTest").Logger()
+	logger.Debug().Msg("BEGIN")
+	logger.Debug().Msg("END")
+}
+
+func (s *baseTestSuite) getCall(connId wsproxy.ConnectionID, callIndex int) mock.Call {
+	calls := s.mockApp.getCalls(connId)
+	return calls[callIndex]
 }
 
 func (s *baseTestSuite) assertArguments(call *mock.Call, objects ...interface{}) {
 	call.Arguments.Assert(s.T(), objects...)
-}
-
-func (s *baseTestSuite) connectToWsproxy(ctx context.Context, options *websocket.DialOptions) (*websocket.Conn, *http.Response, error) {
-	return websocket.Dial(ctx, fmt.Sprintf("ws://%s%s", s.wsproxyServer, wsproxy.ConnectPath), options)
-}
-
-var defaultDialOptions = &websocket.DialOptions{
-	HTTPHeader: http.Header{
-		"Authorization": []string{"some credentials"},
-	},
 }
 
 func toWsMessage(content string) messageJSON {
