@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"wsproxy/internal/config"
 	"wsproxy/internal/logging"
 
 	"github.com/gin-gonic/gin"
@@ -22,22 +23,15 @@ const (
 	MessagePath     EndpointPath = "/message"
 )
 
-type Config struct {
-	ServerHost          string
-	AppBaseUrl          string
-	LoadBalancerAddress string // TODO: remove this
-	ServerPort          int
-}
-
 type Server struct {
 	Addr               string
 	createConnectionId func() ConnectionID
 	listener           net.Listener
-	configuration      Config
+	configuration      config.Config
 	ctx                context.Context
 }
 
-func NewServer(ctx context.Context, configuration Config, createConnectionId func() ConnectionID) *Server {
+func NewServer(ctx context.Context, configuration config.Config, createConnectionId func() ConnectionID) *Server {
 	return &Server{
 		configuration:      configuration,
 		createConnectionId: createConnectionId,
@@ -102,7 +96,7 @@ func (s *Server) Stop() {
 	}
 }
 
-func createWsproxyRequestHandler(options Config, createConnectionId func() ConnectionID) *gin.Engine {
+func createWsproxyRequestHandler(options config.Config, createConnectionId func() ConnectionID) *gin.Engine {
 	rootEngine := gin.Default()
 
 	rootEngine.Use(RequestLogger("websocketGatewayServer"))

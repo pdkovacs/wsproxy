@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	wsproxy "wsproxy/internal"
+	"wsproxy/internal/config"
 )
 
 type baseTestSuite struct {
@@ -49,7 +50,7 @@ func (s *baseTestSuite) SetupSuite() {
 
 	server := wsproxy.NewServer(
 		s.ctx,
-		wsproxy.Config{
+		config.Config{
 			ServerHost:          "localhost",
 			ServerPort:          0,
 			AppBaseUrl:          fmt.Sprintf("http://%s", s.mockApp.listener.Addr().String()),

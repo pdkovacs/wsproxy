@@ -133,7 +133,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 			s.NoError(err)
 		}
 
-		logger.Debug().Dur("sending to client", time.Since(start)).Msg(">>>>>>>>>>>>>>> sending to client")
+		logger.Debug().Dur("timeTaken", time.Since(start)).Msg("sending to client")
 	}()
 
 	go func() {
@@ -147,7 +147,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 			s.NoError(err)
 		}
 
-		logger.Debug().Dur("sending to app", time.Since(start)).Msg(">>>>>>>>>>>>>>> sending to app")
+		logger.Debug().Dur("timeTaken", time.Since(start)).Msg("sending to app")
 	}()
 
 	msgsReceived := map[string]struct{}{}
@@ -159,7 +159,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 			logger.Debug().Str("msgFromApp", msgFromApp).Msg("client channels message it received")
 			msgsReceived[msgFromApp] = struct{}{}
 			wg.Done()
-			logger.Debug().Dur("receiving from app", time.Since(start)).Msg(">>>>>>>>>>>>>>> receiving from app")
+			logger.Debug().Dur("timeTaken", time.Since(start)).Msg("receiving from app")
 		}
 
 	}()
@@ -167,7 +167,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 	wg.Wait()
 	sendReceiveDuration := time.Since(sendReceiveStart)
 
-	logger.Info().Dur("sending-receiving", sendReceiveDuration).Msg(">>>>>>>>>>>>>>>>>>>")
+	logger.Info().Dur("timeTaken", sendReceiveDuration).Msg("sending-receiving")
 
 	client.disconnect(ctx)
 	<-s.mockApp.connMocks[string(connId)].disconnectNotification
@@ -226,7 +226,7 @@ func (s *sendMessageTestSuite) TestSendReceiveMessagesFromAppMultiClients() {
 			start := time.Now()
 			s.testSendReceiveMessagesFromApp(ctx, logger, nrOneWayMessages)
 			wg.Done()
-			logger.Info().Int("taskId", task).Dur("run time", time.Since(start)).Msg(">>>>>>>>>>>>>>>")
+			logger.Info().Int("taskId", task).Dur("timeTaken", time.Since(start)).Msg("run time")
 		}()
 	}
 	wg.Wait()

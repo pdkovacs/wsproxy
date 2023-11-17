@@ -85,7 +85,7 @@ func Get() zerolog.Logger {
 
 		logLevel := parseLevel()
 
-		fmt.Fprintf(os.Stderr, ">>>>>>>>> default log-level: %v\n", logLevel)
+		fmt.Fprintf(os.Stderr, "default log-level: %v\n", logLevel)
 
 		logContext := zerolog.New(output).
 			Level(zerolog.Level(logLevel)).

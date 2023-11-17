@@ -1,0 +1,47 @@
+version: '3'
+
+vars:
+  APP: wsproxy
+  GOOS: linux
+  GOARCH: amd64
+
+tasks:
+  clean:
+    cmds:
+      - go clean -testcache
+  set-test-env:
+    cmds:
+      - echo "export LOG_LEVEL=debug"
+      - echo "export APP_ENV=development"
+  test-all:
+    cmds:
+      - eval $(set-test-env)
+      - go test -v -parallel 1 -timeout 600s ./test/...
+  test-single:
+    cmds:
+      - eval $(set-test-env)
+      - go test -v -parallel 1 -timeout 10s ./test/... -run '^TestConnectingTestSuite$$' # -testify.m '^TestConnectionID$$'
+      # - go test -v -parallel 1 -timeout 60s ./test/... -run '^TestSendMessageTestSuite$$' -testify.m '^TestSendReceiveMessagesFromAppMultiClients$$'
+  buildinfo:
+    cmds:
+      - echo VERSION=0.0.1 > internal/config/buildinfo.txt
+      - printf "TIME=" >> internal/config/buildinfo.txt
+      - date +%Y-%m-%dT%H:%M:%S%z >> internal/config/buildinfo.txt
+      - printf "COMMIT=" >> internal/config/buildinfo.txt
+      - git rev-parse HEAD >> internal/config/buildinfo.txt
+  build:
+    cmds:
+      - task: buildinfo
+      - echo "GOOS {{.GOOS}} GOARCH {{.GOARCH}}"
+      - env GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -o {{.APP}} cmd/main.go
+    sources:
+      - cmd/**/*
+      - internal/**/*
+      - taskfile.yaml
+    generates:
+      - "{{.APP}}"
+  docker:
+    cmds:
+      - task: build
+      - cp {{.APP}} deployments/docker/
+      - docker build -t wsproxy:latest deployments/docker/
