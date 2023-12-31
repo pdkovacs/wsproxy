@@ -16,7 +16,10 @@ import (
 )
 
 // TODO: make this configurable?
-const ConnectionIDHeaderKey = "X-WSGW-CONNECTION-ID"
+const (
+	ConnectionIDHeaderKey = "X-WSGW-CONNECTION-ID"
+	connIdPathParamName   = ConnectionIDKey
+)
 
 type wsIOAdapter struct {
 	wsConn *websocket.Conn
@@ -103,7 +106,7 @@ func handleClientConnecting(createConnectionId func() ConnectionID, appUrls appl
 }
 
 func handleClientDisconnected(appUrls applicationURLs, appConn *appConnection, logger zerolog.Logger) {
-	logger = logger.With().Str("method", "handleClientDisconnected").Str("appUrl", appUrls.disconnected()).Str("connectionId", string(appConn.id)).Logger()
+	logger = logger.With().Str("method", "handleClientDisconnected").Str("appUrl", appUrls.disconnected()).Str(ConnectionIDKey, string(appConn.id)).Logger()
 
 	logger.Debug().Msg("BEGIN")
 
@@ -127,10 +130,10 @@ func handleClientDisconnected(appUrls applicationURLs, appConn *appConnection, l
 	}
 }
 
-// Calls the `POST /ws/message-received` endpoint on the backend with "msg" and "connectionId"
+// Calls the `POST /ws/message-received` endpoint on the backend with "msg" and ConnectionIDKey
 func handleClientMessage(appConn *appConnection, appUrls applicationURLs) func(c context.Context, msg string) error {
 	return func(c context.Context, msg string) error {
-		logger := zerolog.Ctx(c).With().Str("connectionId", string(appConn.id)).Str("func", "handleClientMessage").Logger()
+		logger := zerolog.Ctx(c).With().Str(ConnectionIDKey, string(appConn.id)).Str("func", "handleClientMessage").Logger()
 		logger.Debug().Str("msg", msg).Send()
 
 		request, err := http.NewRequest(
@@ -179,6 +182,7 @@ func connectHandler(
 	ws *wsConnections,
 	loadBalancerAddress string,
 	createConnectionId func() ConnectionID,
+	clusterSupport *ClusterSupport,
 ) gin.HandlerFunc {
 	return func(g *gin.Context) {
 		appConn := handleClientConnecting(createConnectionId, appUrls)(g)
@@ -187,9 +191,9 @@ func connectHandler(
 			return
 		}
 
-		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "authentication handler").Str("connectionId", string(appConn.id)).Logger()
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "authentication handler").Str(ConnectionIDKey, string(appConn.id)).Logger()
 
-		// logger = logger.().Str("method", "connectHandler").Str("connectionId", string(appConn.id)).Logger()
+		// logger = logger.().Str("method", "connectHandler").Str(ConnectionIDKey, string(appConn.id)).Logger()
 
 		wsConn, subsErr := websocket.Accept(g.Writer, g.Request, &websocket.AcceptOptions{
 			OriginPatterns: []string{loadBalancerAddress},
@@ -207,6 +211,10 @@ func connectHandler(
 
 			handleClientDisconnected(appUrls, appConn, logger)
 
+			if clusterSupport != nil {
+				clusterSupport.deregisterConnection(g.Request.Context(), appConn.id)
+			}
+
 			if wsClosedError != nil {
 				if errors.Is(wsClosedError, context.Canceled) {
 					return // Done
@@ -221,7 +229,11 @@ func connectHandler(
 			}
 		}()
 
-		ackErr := sendMessageToClient(g.Request.Context(), wsConn, map[string]string{"connectionId": string(appConn.id)})
+		if clusterSupport != nil {
+			clusterSupport.registerConnection(g.Request.Context(), appConn.id)
+		}
+
+		ackErr := sendMessageToClient(g.Request.Context(), wsConn, map[string]string{ConnectionIDKey: string(appConn.id)})
 		if ackErr != nil {
 			logger.Error().Err(fmt.Errorf("failed to send connect ack: %v", ackErr))
 			wsClosedError = ackErr
@@ -236,11 +248,12 @@ func connectHandler(
 	}
 }
 
-func pushHandler(authenticateBackend func(c *gin.Context) error, connIdPathParamName string, ws *wsConnections) gin.HandlerFunc {
+func pushHandler(authenticateBackend func(c *gin.Context) error, ws *wsConnections, clusterSupport *ClusterSupport) gin.HandlerFunc {
 	return func(g *gin.Context) {
-		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "pushHandler").Logger()
-
 		connectionIdStr := g.Param(connIdPathParamName)
+
+		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "pushHandler").Str(ConnectionIDKey, connectionIdStr).Logger()
+
 		if connectionIdStr == "" {
 			logger.Info().Msgf("Missing path param: %s", connIdPathParamName)
 			g.AbortWithStatus(http.StatusBadRequest)
@@ -259,9 +272,13 @@ func pushHandler(authenticateBackend func(c *gin.Context) error, connIdPathParam
 
 		errPush := ws.push(g.Request.Context(), bodyAsString, ConnectionID(connectionIdStr))
 		if errPush == errConnectionNotFound {
-			logger.Error().Msgf("Connection doesn't exist: %s", connectionIdStr)
-			g.AbortWithStatus(http.StatusNotFound)
-			return
+			if clusterSupport == nil {
+				logger.Info().Msg("Web-socket connection not found")
+				g.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			logger.Info().Msgf("Connection '%s' isn't managed here, publishing payload...", connectionIdStr)
+			errPush = clusterSupport.relayMessage(g.Request.Context(), ConnectionID(connectionIdStr), bodyAsString)
 		}
 
 		if errPush != nil {

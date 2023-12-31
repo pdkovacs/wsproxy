@@ -1,17 +1,18 @@
-package test
+package integration
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"sync"
+	"wsproxy/internal/config"
+	"wsproxy/test/mockapp"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	wsproxy "wsproxy/internal"
-	"wsproxy/internal/config"
 )
 
 type baseTestSuite struct {
@@ -19,7 +20,7 @@ type baseTestSuite struct {
 	wsproxyServer   string
 	ctx             context.Context
 	wsGateway       *wsproxy.Server
-	mockApp         *mockApplication
+	mockApp         mockapp.MockApp
 	connIdGenerator func() wsproxy.ConnectionID
 	// Fall-back connection-id in case no generator is specified to be used in strictly sequential test cases
 	// testing in isolation the connection setup itself
@@ -33,10 +34,10 @@ func NewBaseTestSuite(ctx context.Context) *baseTestSuite {
 }
 
 func (s *baseTestSuite) startMockApp() {
-	s.mockApp = newMockApp(func() string {
+	s.mockApp = mockapp.NewMockApp(func() string {
 		return fmt.Sprintf("http://%s", s.wsproxyServer)
 	})
-	mockAppStartErr := s.mockApp.start()
+	mockAppStartErr := s.mockApp.Start()
 	if mockAppStartErr != nil {
 		panic(mockAppStartErr)
 	}
@@ -53,7 +54,7 @@ func (s *baseTestSuite) SetupSuite() {
 		config.Config{
 			ServerHost:          "localhost",
 			ServerPort:          0,
-			AppBaseUrl:          fmt.Sprintf("http://%s", s.mockApp.listener.Addr().String()),
+			AppBaseUrl:          fmt.Sprintf("http://%s", s.mockApp.GetAppAddress()),
 			LoadBalancerAddress: "",
 		},
 		func() wsproxy.ConnectionID {
@@ -80,21 +81,15 @@ func (s *baseTestSuite) SetupSuite() {
 
 func (s *baseTestSuite) TearDownSuite() {
 	if s.mockApp != nil {
-		s.mockApp.stop()
+		s.mockApp.Stop()
 	}
 	if s.wsGateway != nil {
 		s.wsGateway.Stop()
 	}
 }
 
-func (s *baseTestSuite) BeforeTest(suiteName, testName string) {
-	logger := s.mockApp.logger.With().Str("method", "BeforeTest").Logger()
-	logger.Debug().Msg("BEGIN")
-	logger.Debug().Msg("END")
-}
-
 func (s *baseTestSuite) getCall(connId wsproxy.ConnectionID, callIndex int) mock.Call {
-	calls := s.mockApp.getCalls(connId)
+	calls := s.mockApp.GetCalls(connId)
 	return calls[callIndex]
 }
 
@@ -102,6 +97,6 @@ func (s *baseTestSuite) assertArguments(call *mock.Call, objects ...interface{})
 	call.Arguments.Assert(s.T(), objects...)
 }
 
-func toWsMessage(content string) messageJSON {
-	return messageJSON{"message": content}
+func toWsMessage(content string) mockapp.MessageJSON {
+	return mockapp.MessageJSON{"message": content}
 }

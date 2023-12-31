@@ -25,12 +25,7 @@ func main() {
 	}
 
 	if serverWanted {
-		var confErr error
-
 		conf := config.GetConfig(os.Args)
-		if confErr != nil {
-			panic(confErr)
-		}
 
 		var stopServer func()
 		exitc := make(chan struct{})
@@ -49,9 +44,13 @@ func main() {
 			exitc <- struct{}{}
 		}()
 
-		app := wsproxy.NewServer(ctx, conf, func() wsproxy.ConnectionID {
-			return wsproxy.CreateID(ctx)
-		})
+		app := wsproxy.NewServer(
+			ctx,
+			conf,
+			func() wsproxy.ConnectionID {
+				return wsproxy.CreateID(ctx)
+			},
+		)
 		errAppStart := app.SetupAndStart(func(port int, stop func()) {
 			stopServer = stop
 		})

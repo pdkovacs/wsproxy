@@ -73,7 +73,7 @@ func (wsconn *wsConnections) processMessages(
 	wsIo wsIO,
 	onMessageFromClient onMgsReceivedFunc,
 ) error {
-	logger := zerolog.Ctx(ctx).With().Str("method", "processMessages").Str("connectionId", string(connId)).Logger()
+	logger := zerolog.Ctx(ctx).With().Str("method", "processMessages").Str(ConnectionIDKey, string(connId)).Logger()
 	conn := newConnection(connId, wsIo, wsconn.connectionMessageBuffer)
 
 	wsconn.addConnection(conn)

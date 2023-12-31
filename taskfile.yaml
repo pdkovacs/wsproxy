@@ -1,5 +1,9 @@
 version: '3'
 
+env:
+  TARGETING_MINIKUBE: '{{.TARGETING_MINIKUBE | default "yes"}}'
+  IMAGE_REPO: wsproxy
+
 vars:
   APP: wsproxy
   GOOS: linux
@@ -20,7 +24,7 @@ tasks:
   test-single:
     cmds:
       - eval $(set-test-env)
-      - go test -v -parallel 1 -timeout 10s ./test/... -run '^TestConnectingTestSuite$$' # -testify.m '^TestConnectionID$$'
+      - go test -v -parallel 1 -timeout 10s ./test/... -run '^TestClusterSupportTestSuite$$' # -testify.m '^TestSendReceiveMessagesFromAppMultiClients$'
       # - go test -v -parallel 1 -timeout 60s ./test/... -run '^TestSendMessageTestSuite$$' -testify.m '^TestSendReceiveMessagesFromAppMultiClients$$'
   buildinfo:
     cmds:
@@ -43,5 +47,19 @@ tasks:
   docker:
     cmds:
       - task: build
-      - cp {{.APP}} deployments/docker/
-      - docker build -t wsproxy:latest deployments/docker/
+      - cp {{.APP}} deploy/docker/
+      - |
+        if [[ "{{.TARGETING_MINIKUBE}}" = "yes" ]];
+        then
+          echo "Targeting minikube..."
+          eval $(minikube -p minikube docker-env)
+        fi
+        docker build -t wsproxy:latest deploy/docker/
+  cluster:
+    cmds:
+      - task: docker
+      - kubectl apply -f deploy/k8s/redis-config.yaml
+      - kubectl apply -f deploy/k8s/redis-deployment.yaml
+      - kubectl apply -f deploy/k8s/redis-service.yaml
+      - kubectl apply -f deploy/k8s/wsproxy-deployment.yaml
+      - kubectl apply -f deploy/k8s/wsproxy-service.yaml

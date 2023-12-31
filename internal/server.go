@@ -26,15 +26,21 @@ const (
 type Server struct {
 	Addr               string
 	createConnectionId func() ConnectionID
+	clusterSupport     *ClusterSupport
 	listener           net.Listener
 	configuration      config.Config
 	ctx                context.Context
 }
 
-func NewServer(ctx context.Context, configuration config.Config, createConnectionId func() ConnectionID) *Server {
+func NewServer(
+	ctx context.Context,
+	configuration config.Config,
+	createConnectionId func() ConnectionID,
+) *Server {
 	return &Server{
 		configuration:      configuration,
 		createConnectionId: createConnectionId,
+		clusterSupport:     NewClusterSupport(configuration),
 		ctx:                ctx,
 	}
 }
@@ -72,7 +78,7 @@ func (s *Server) start(r http.Handler, ready func(port int, stop func())) error 
 
 // SetupAndStart sets up and starts server.
 func (s *Server) SetupAndStart(ready func(port int, stop func())) error {
-	r := createWsproxyRequestHandler(s.configuration, s.createConnectionId)
+	r := createWsproxyRequestHandler(s.configuration, s.createConnectionId, s.clusterSupport)
 	return s.start(r, ready)
 }
 
@@ -96,7 +102,7 @@ func (s *Server) Stop() {
 	}
 }
 
-func createWsproxyRequestHandler(options config.Config, createConnectionId func() ConnectionID) *gin.Engine {
+func createWsproxyRequestHandler(options config.Config, createConnectionId func() ConnectionID, clusterSupport *ClusterSupport) *gin.Engine {
 	rootEngine := gin.Default()
 
 	rootEngine.Use(RequestLogger("websocketGatewayServer"))
@@ -114,15 +120,16 @@ func createWsproxyRequestHandler(options config.Config, createConnectionId func(
 			wsConns,
 			options.LoadBalancerAddress,
 			createConnectionId,
+			clusterSupport,
 		),
 	)
 
 	rootEngine.POST(
-		"/message/:connectionId",
+		fmt.Sprintf("/message/:%s", connIdPathParamName),
 		pushHandler(
 			authenticateBackend,
-			"connectionId",
 			wsConns,
+			clusterSupport,
 		),
 	)
 

@@ -1,4 +1,4 @@
-package test
+package integration
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	wsproxy "wsproxy/internal"
+	"wsproxy/test/mockapp"
 
 	"github.com/rs/zerolog"
 	"nhooyr.io/websocket"
@@ -57,7 +58,7 @@ func (c *Client) readConnId(ctx context.Context) (wsproxy.ConnectionID, error) {
 		return "", readAckErr
 	}
 
-	return wsproxy.ConnectionID(ackMessage["connectionId"]), nil
+	return wsproxy.ConnectionID(ackMessage[wsproxy.ConnectionIDKey]), nil
 }
 
 func (c *Client) connect(ctx context.Context, connectOptions ...*websocket.DialOptions) (*http.Response, error) {
@@ -96,7 +97,7 @@ func (c *Client) disconnect(ctx context.Context) error {
 	return c.wsConn.Close(websocket.StatusNormalClosure, "we're done")
 }
 
-func (c *Client) writeMessage(ctx context.Context, message messageJSON) error {
+func (c *Client) writeMessage(ctx context.Context, message mockapp.MessageJSON) error {
 	return wsjson.Write(ctx, c.wsConn, message)
 }
 
