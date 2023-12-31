@@ -1,4 +1,4 @@
-package test
+package integration
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 	wsproxy "wsproxy/internal"
 	"wsproxy/internal/logging"
+	"wsproxy/test/mockapp"
 
 	"github.com/rs/xid"
 	"github.com/rs/zerolog"
@@ -44,27 +45,27 @@ func (s *sendMessageTestSuite) TestSendAMessageToApp() {
 	connId := client.connectionId
 	message := "message_" + xid.New().String()
 
-	s.mockApp.on(mockMethodMessageReceived, connId, toWsMessage(message))
-	s.mockApp.on(mockMethodDisconnected, connId)
+	s.mockApp.On(mockapp.MockMethodMessageReceived, connId, toWsMessage(message))
+	s.mockApp.On(mockapp.MockMethodDisconnected, connId)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 
 	err = client.writeMessage(ctx, toWsMessage(message))
 	s.NoError(err)
 
-	client.disconnect(ctx)
-	<-s.mockApp.connMocks[string(connId)].disconnectNotification
+	_ = client.disconnect(ctx)
+	<-s.mockApp.OnDisconnect(connId)
 
-	s.Len(s.mockApp.getCalls(connId), 2)
+	s.Len(s.mockApp.GetCalls(connId), 2)
 
 	callIndex := 0
 	call := s.getCall(connId, callIndex)
-	s.Equal(mockMethodMessageReceived, call.Method)
+	s.Equal(mockapp.MockMethodMessageReceived, call.Method)
 	s.assertArguments(&call, toWsMessage(message))
 
 	callIndex++
 	call = s.getCall(connId, callIndex)
-	s.Equal(mockMethodDisconnected, call.Method)
+	s.Equal(mockapp.MockMethodDisconnected, call.Method)
 }
 
 func (s *sendMessageTestSuite) TestReceiveAMessageFromApp() {
@@ -84,24 +85,24 @@ func (s *sendMessageTestSuite) TestReceiveAMessageFromApp() {
 	connId := client.connectionId
 	msgToReceive := "message_" + xid.New().String()
 
-	s.mockApp.on(mockMethodDisconnected, connId)
+	s.mockApp.On(mockapp.MockMethodDisconnected, connId)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 
-	err = s.mockApp.sendToClient(connId, toWsMessage(msgToReceive))
+	err = s.mockApp.SendToClient(connId, toWsMessage(msgToReceive))
 	s.NoError(err)
 
 	msgFromApp := <-msgFromAppChan
 	s.Equal(msgToReceive, msgFromApp)
 
-	client.disconnect(ctx)
-	<-s.mockApp.connMocks[string(connId)].disconnectNotification
+	_ = client.disconnect(ctx)
+	<-s.mockApp.OnDisconnect(connId)
 
-	s.Len(s.mockApp.getCalls(connId), 1)
+	s.Len(s.mockApp.GetCalls(connId), 1)
 
 	callIndex := 0
 	call := s.getCall(connId, callIndex)
-	s.Equal(mockMethodDisconnected, call.Method)
+	s.Equal(mockapp.MockMethodDisconnected, call.Method)
 }
 
 func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Context, logger zerolog.Logger, nrOneWayMessages int) {
@@ -113,9 +114,9 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 
 	connId := client.connectionId
 
-	s.mockApp.on(mockMethodDisconnected, connId)
+	s.mockApp.On(mockapp.MockMethodDisconnected, connId)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 
 	msgsToSend := generateMessages(nrOneWayMessages)
 	msgsToReceive := generateMessages(nrOneWayMessages)
@@ -128,7 +129,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 		start := time.Now()
 
 		for msg := range msgsToReceive {
-			err = s.mockApp.sendToClient(connId, toWsMessage(msg))
+			err = s.mockApp.SendToClient(connId, toWsMessage(msg))
 			wg.Done()
 			s.NoError(err)
 		}
@@ -141,7 +142,7 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 
 		for msg := range msgsToSend {
 			jsonMsg := toWsMessage(msg)
-			s.mockApp.on(mockMethodMessageReceived, connId, jsonMsg)
+			s.mockApp.On(mockapp.MockMethodMessageReceived, connId, jsonMsg)
 			err = client.writeMessage(ctx, jsonMsg)
 			wg.Done()
 			s.NoError(err)
@@ -161,7 +162,6 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 			wg.Done()
 			logger.Debug().Dur("timeTaken", time.Since(start)).Msg("receiving from app")
 		}
-
 	}()
 
 	wg.Wait()
@@ -169,19 +169,19 @@ func (s *sendMessageTestSuite) testSendReceiveMessagesFromApp(ctx context.Contex
 
 	logger.Info().Dur("timeTaken", sendReceiveDuration).Msg("sending-receiving")
 
-	client.disconnect(ctx)
-	<-s.mockApp.connMocks[string(connId)].disconnectNotification
+	_ = client.disconnect(ctx)
+	<-s.mockApp.OnDisconnect(connId)
 
 	s.Equal(msgsToReceive, msgsReceived)
 
-	s.Len(s.mockApp.getCalls(connId), nrOneWayMessages+1)
+	s.Len(s.mockApp.GetCalls(connId), nrOneWayMessages+1)
 
 	msgsSent := map[string]struct{}{}
 	for index := 0; index < nrOneWayMessages+1; index++ {
 		call := s.getCall(connId, index)
-		if call.Method == mockMethodMessageReceived {
+		if call.Method == mockapp.MockMethodMessageReceived {
 			messageArg := call.Arguments[0]
-			msg, ok := messageArg.(messageJSON)
+			msg, ok := messageArg.(mockapp.MessageJSON)
 			if !ok {
 				panic(fmt.Sprintf("%v (%T) is not a map[string]string", messageArg, messageArg))
 			}

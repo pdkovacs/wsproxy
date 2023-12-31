@@ -1,4 +1,4 @@
-package test
+package integration
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 	wsproxy "wsproxy/internal"
 	"wsproxy/internal/logging"
+	"wsproxy/test/mockapp"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/suite"
@@ -28,14 +29,6 @@ func TestConnectingTestSuite(t *testing.T) {
 	)
 }
 
-func (s *connectingTestSuite) BeforeTest(suiteName string, testName string) {
-	s.baseTestSuite.BeforeTest(suiteName, testName)
-	logger := s.mockApp.logger.With().Str("method", "BeforeTest").Logger()
-	logger.Debug().Msg("BEGIN")
-	s.mockApp.recordConnectionFromClient = true
-	logger.Debug().Msg("END")
-}
-
 func (s *connectingTestSuite) TestConnectionID() {
 	ctx, cancel := context.WithTimeout(s.ctx, time.Minute)
 	defer cancel()
@@ -47,10 +40,10 @@ func (s *connectingTestSuite) TestConnectionID() {
 
 	message := toWsMessage("hi")
 
-	s.mockApp.expectConnDisconn(connId)
-	s.mockApp.on(mockMethodMessageReceived, connId, message)
+	s.mockApp.ExpectConnDisconn(connId)
+	s.mockApp.On(mockapp.MockMethodMessageReceived, connId, message)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 
 	_, err := client.connect(ctx)
 	s.NoError(err)
@@ -59,16 +52,16 @@ func (s *connectingTestSuite) TestConnectionID() {
 	}
 	defer func() {
 		client.disconnect(ctx)
-		<-s.mockApp.connMocks[string(connId)].disconnectNotification
+		<-s.mockApp.OnDisconnect(connId)
 	}()
 
 	callIndex := 0
-	s.Len(s.mockApp.getCalls(connId), callIndex+1)
+	s.Len(s.mockApp.GetCalls(connId), callIndex+1)
 	call := s.getCall(connId, callIndex)
 
 	err = client.writeMessage(ctx, message)
 	s.NoError(err)
-	s.Equal(mockMethodConnect, call.Method)
+	s.Equal(mockapp.MockMethodConnect, call.Method)
 }
 
 func (s *connectingTestSuite) TestConnectingWithInvalidCredentials() {
@@ -82,13 +75,13 @@ func (s *connectingTestSuite) TestConnectingWithInvalidCredentials() {
 
 	response, wsConnectErr := client.connect(ctx, &websocket.DialOptions{
 		HTTPHeader: http.Header{
-			"Authorization": []string{badCredential},
+			"Authorization": []string{mockapp.BadCredential},
 		},
 	})
 	s.Error(wsConnectErr)
 	s.Equal(response.StatusCode, http.StatusUnauthorized)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 }
 
 func (s *connectingTestSuite) TestDisconnection() {
@@ -100,9 +93,9 @@ func (s *connectingTestSuite) TestDisconnection() {
 
 	client := NewClient(s.wsproxyServer, nil)
 
-	s.mockApp.expectConnDisconn(connId)
+	s.mockApp.ExpectConnDisconn(connId)
 
-	s.Len(s.mockApp.getCalls(connId), 0)
+	s.Len(s.mockApp.GetCalls(connId), 0)
 
 	_, err := client.connect(ctx)
 	s.NoError(err)
@@ -113,15 +106,15 @@ func (s *connectingTestSuite) TestDisconnection() {
 	s.Equal(connId, client.connectionId)
 
 	callIndex := 0
-	s.Len(s.mockApp.getCalls(connId), callIndex+1)
+	s.Len(s.mockApp.GetCalls(connId), callIndex+1)
 	call := s.getCall(connId, callIndex)
-	s.Equal(mockMethodConnect, call.Method)
+	s.Equal(mockapp.MockMethodConnect, call.Method)
 
 	client.disconnect(ctx)
-	<-s.mockApp.connMocks[string(connId)].disconnectNotification
+	<-s.mockApp.OnDisconnect(connId)
 
 	callIndex++
 	call = s.getCall(connId, callIndex)
-	s.Len(s.mockApp.getCalls(connId), callIndex+1)
-	s.Equal(mockMethodDisconnected, call.Method)
+	s.Len(s.mockApp.GetCalls(connId), callIndex+1)
+	s.Equal(mockapp.MockMethodDisconnected, call.Method)
 }

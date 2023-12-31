@@ -49,9 +49,14 @@ func main() {
 			exitc <- struct{}{}
 		}()
 
-		app := wsproxy.NewServer(ctx, conf, func() wsproxy.ConnectionID {
-			return wsproxy.CreateID(ctx)
-		})
+		app := wsproxy.NewServer(
+			ctx,
+			conf,
+			func() wsproxy.ConnectionID {
+				return wsproxy.CreateID(ctx)
+			},
+			wsproxy.NewClusterSupport(conf),
+		)
 		errAppStart := app.SetupAndStart(func(port int, stop func()) {
 			stopServer = stop
 		})
