@@ -27,7 +27,7 @@ type Server struct {
 	Addr               string
 	createConnectionId func() ConnectionID
 	clusterSupport     *ClusterSupport
-	listener           net.Listener
+	server             http.Server
 	configuration      config.Config
 	ctx                context.Context
 }
@@ -49,16 +49,15 @@ func NewServer(
 func (s *Server) start(r http.Handler, ready func(port int, stop func())) error {
 	logger := zerolog.Ctx(s.ctx).With().Str("method", "start").Logger()
 	logger.Info().Msg("Starting server on ephemeral....")
-	var err error
 
-	s.listener, err = net.Listen("tcp", fmt.Sprintf("%s:%d", s.configuration.ServerHost, s.configuration.ServerPort))
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.configuration.ServerHost, s.configuration.ServerPort))
 	if err != nil {
 		panic(fmt.Sprintf("Error while starting to listen at an ephemeral port: %v", err))
 	}
-	s.Addr = s.listener.Addr().String()
+	s.Addr = listener.Addr().String()
 	logger.Info().Msgf("wsproxy instance is listening at %s", s.Addr)
 
-	_, port, err := net.SplitHostPort(s.listener.Addr().String())
+	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		panic(fmt.Sprintf("Error while parsing the server address: %v", err))
 	}
@@ -73,7 +72,13 @@ func (s *Server) start(r http.Handler, ready func(port int, stop func())) error 
 		ready(portAsInt, s.Stop)
 	}
 
-	return http.Serve(s.listener, r)
+	server := &http.Server{
+		Handler:      r,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	return server.Serve(listener)
 }
 
 // SetupAndStart sets up and starts server.
@@ -93,12 +98,12 @@ func authenticateBackend(c *gin.Context) error {
 // Stop kills the listener
 func (s *Server) Stop() {
 	logger := zerolog.Ctx(s.ctx).With().Str("method", "stop").Logger()
-	logger.Info().Msgf("listener: %v", s.listener)
-	error := s.listener.Close()
+	logger.Info().Msgf("Shutting down server...")
+	error := s.server.Shutdown(s.ctx)
 	if error != nil {
-		logger.Error().Msgf("Error while closing listener: %v", error)
+		logger.Error().Msgf("Error while shutting down server: %v", error)
 	} else {
-		logger.Info().Msg("Listener closed successfully")
+		logger.Info().Msg("Server shutdown successfully")
 	}
 }
 

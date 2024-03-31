@@ -142,7 +142,9 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 
 			_, ok := m.connMocks[connId]
 			if !ok {
-				logger.Error().Str(wsproxy.ConnectionIDKey, connId).Msg("connection not mocked")
+				logger.Info().Str(wsproxy.ConnectionIDKey, connId).Msg("No mock for connection yet, creating...")
+				m.connMocks[string(connId)] = newClientPeer()
+				res.Status(200)
 				return
 			}
 			m.connMocks[connId].connect()
@@ -154,6 +156,7 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	ws.POST(string(wsproxy.DisonnectedPath), func(g *gin.Context) {
 		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS disconnection handler").Logger()
 		req := g.Request
+		res := g
 
 		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
@@ -161,6 +164,7 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 			defer m.connMocksMux.Unlock()
 			if _, ok := m.connMocks[connId]; !ok {
 				logger.Error().Str(wsproxy.ConnectionIDKey, connId).Msg("connection not mocked")
+				res.Status(500)
 				return
 			}
 			m.connMocks[connId].disconnected()
@@ -170,6 +174,8 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 	ws.POST(string(wsproxy.MessagePath), func(g *gin.Context) {
 		logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS message handler").Logger()
 		req := g.Request
+		res := g
+
 		connHeaderKey := wsproxy.ConnectionIDHeaderKey
 		if connId := req.Header.Get(connHeaderKey); connId != "" {
 			bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
@@ -183,6 +189,7 @@ func (m *mockApplication) createMockAppRequestHandler() (http.Handler, error) {
 			defer m.connMocksMux.Unlock()
 			if _, ok := m.connMocks[connId]; !ok {
 				logger.Error().Str(wsproxy.ConnectionIDKey, connId).Msg("connection not mocked")
+				res.Status(500)
 				return
 			}
 			m.connMocks[connId].messageReceived(parseMessageJSON(bodyAsBytes))

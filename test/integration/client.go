@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	wsproxy "wsproxy/internal"
@@ -79,6 +80,11 @@ func (c *Client) connect(ctx context.Context, connectOptions ...*websocket.DialO
 		for {
 			msgType, msgFromApp, readErr := conn.Read(ctx)
 			if readErr != nil {
+				var closeError websocket.CloseError
+				if errors.As(readErr, &closeError) && closeError.Code == websocket.StatusNormalClosure {
+					readFromAppLogger.Debug().Msg("Client closed the connection normally")
+					return
+				}
 				readFromAppLogger.Error().Err(readErr).Msg("error while reading from websocket")
 				return
 			}

@@ -110,11 +110,15 @@ func (s *connectingTestSuite) TestDisconnection() {
 	call := s.getCall(connId, callIndex)
 	s.Equal(mockapp.MockMethodConnect, call.Method)
 
+	zerolog.Ctx(s.ctx).Debug().Msg("TestDisconnection: disconnecting")
 	client.disconnect(ctx)
+	zerolog.Ctx(s.ctx).Debug().Msg("TestDisconnection: waiting for disconnect ACK")
 	<-s.mockApp.OnDisconnect(connId)
+	zerolog.Ctx(s.ctx).Debug().Msg("TestDisconnection: disconnect ACKed")
 
 	callIndex++
 	call = s.getCall(connId, callIndex)
 	s.Len(s.mockApp.GetCalls(connId), callIndex+1)
 	s.Equal(mockapp.MockMethodDisconnected, call.Method)
+	zerolog.Ctx(s.ctx).Debug().Msg("TestDisconnection: test finished")
 }

@@ -3,7 +3,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"wsproxy/internal/config"
 	"wsproxy/test/mockapp"
@@ -69,8 +68,9 @@ func (s *baseTestSuite) SetupSuite() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		logger.Debug().Msg("Setting up and starting the server...")
 		err := server.SetupAndStart(func(port int, _ func()) {
-			fmt.Fprint(os.Stderr, "WsGateway is ready!\n")
+			logger.Info().Msg("WsGateway is ready!")
 			s.wsproxyServer = fmt.Sprintf("localhost:%d", port)
 			wg.Done()
 		})
