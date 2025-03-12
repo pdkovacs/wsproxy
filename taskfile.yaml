@@ -13,17 +13,13 @@ tasks:
   clean:
     cmds:
       - go clean -testcache
-  set-test-env:
-    cmds:
-      - echo "export LOG_LEVEL=debug"
-      - echo "export APP_ENV=development"
   test-all:
+    dotenv: [ ".test-env" ]
     cmds:
-      - eval $(set-test-env)
       - go test -v -parallel 1 -timeout 600s ./test/...
   test-single:
+    dotenv: [ ".test-env" ]
     cmds:
-      - eval $(set-test-env)
       - go test -v -parallel 1 -timeout 10s ./test/... -run '^TestClusterSupportTestSuite$$' # -testify.m '^TestSendReceiveMessagesFromAppMultiClients$'
       # - go test -v -parallel 1 -timeout 60s ./test/... -run '^TestSendMessageTestSuite$$' -testify.m '^TestSendReceiveMessagesFromAppMultiClients$$'
   buildinfo:
