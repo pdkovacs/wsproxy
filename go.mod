@@ -1,6 +1,6 @@
 module wsproxy
 
-go 1.22
+go 1.24
 
 require (
 	github.com/gin-gonic/gin v1.9.0
