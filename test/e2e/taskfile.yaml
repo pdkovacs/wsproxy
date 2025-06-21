@@ -1,0 +1,67 @@
+version: '3'
+
+env:
+  IMAGE_REPO: wsproxy
+
+vars:
+  DEV_LOG_FILE: '{{.DEV_LOG_FILE | default "$HOME/workspace/logs/e2e-app" }}'
+  UI_DIST: web/dist
+  GOOS: linux
+  GOARCH: amd64
+
+tasks:
+  build-ui:
+    cmds:
+    - |
+      cd ./web
+      npm run build
+  build-app:
+    cmds:
+    - |
+      cd ./app/cmd
+      GOOS=linux GOARCH=amd64 go build -tags lambda.norpc -o app main.go
+  build-app-with-ui:
+    cmds:
+    - task: build-ui
+    - rm -rf "app/{{.UI_DIST}}" || echo "No files to remove in app/{{.UI_DIST}}"
+    - cp -r {{.UI_DIST}} app/{{.UI_DIST}}
+    - task: build-app
+  run_app:
+    cmds:
+    - |
+      mkdir -p $(dirname {{.DEV_LOG_FILE}})
+      cat > pwfile <<EOF
+        [
+          {"username": "peter.dunay.kovacs@gmail.com", "password": "pass"},
+          {"username": "user1", "password": "pass"},
+          {"username": "user2", "password": "pass"},
+          {"username": "user3", "password": "pass"}
+        ]
+      EOF
+      LOG_LEVEL=debug \
+        ./app/cmd/app \
+        --authentication-type basic \
+        --password-credentials "$(cat pwfile)" \
+        --users-by-roles '{"users": ["peter.dunay.kovacs@gmail.com", "user1", "user2", "user3"]}' |
+        tee {{.DEV_LOG_FILE}}
+  build-client-device:
+    cmds:
+    - |
+      cd ./client-device/cmd
+      GOOS=linux GOARCH=amd64 go build -tags lambda.norpc -o client-device main.go
+  aws-deploy:
+    cmds:
+    - |
+      . ${HOME}/.my-aws-config
+      . ${HOME}/.wsproxy-test-cognito.secrets
+      cd ./deployment/aws/tf
+      terragrunt apply --all --queue-include-external
+      # terragrunt apply
+  aws-destroy:
+    cmds:
+    - |
+      . ${HOME}/.my-aws-config
+      . ${HOME}/.wsproxy-test-cognito.secrets
+      cd ./deployment/aws/tf
+      terragrunt destroy --all --queue-include-external
+      # terragrunt apply

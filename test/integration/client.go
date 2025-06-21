@@ -99,7 +99,7 @@ func (c *Client) connect(ctx context.Context, connectOptions ...*websocket.DialO
 	return httpResponse, nil
 }
 
-func (c *Client) disconnect(ctx context.Context) error {
+func (c *Client) disconnect(_ context.Context) error {
 	return c.wsConn.Close(websocket.StatusNormalClosure, "we're done")
 }
 

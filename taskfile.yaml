@@ -1,5 +1,10 @@
 version: '3'
 
+includes:
+  e2e:
+    taskfile: ./test/e2e/taskfile.yaml
+    dir: ./test/e2e
+
 env:
   TARGETING_MINIKUBE: '{{.TARGETING_MINIKUBE | default "yes"}}'
   IMAGE_REPO: wsproxy
