@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"wsproxy/test/e2e/app/security/authr"
 )
 
@@ -14,10 +15,10 @@ type UserService struct {
 	AuthorizationService AuthorizationService
 }
 
-func (us *UserService) getPermissionsForUser(userId string) []authr.PermissionID {
+func (us *UserService) getPermissionsForUser(ctx context.Context, userId string) []authr.PermissionID {
 	userPermissions := []authr.PermissionID{}
 
-	memberIn := us.AuthorizationService.GetGroupsForUser(userId)
+	memberIn := us.AuthorizationService.GetGroupsForUser(ctx, userId)
 	for _, group := range memberIn {
 		userPermissions = append(userPermissions, authr.GetPermissionsForGroup(group)...)
 	}
@@ -29,12 +30,12 @@ func (us *UserService) getDisplayName(userId string) string {
 	return userId
 }
 
-func (us *UserService) GetUserInfo(userId string) authr.UserInfo {
-	memberIn := us.AuthorizationService.GetGroupsForUser(userId)
+func (us *UserService) GetUserInfo(ctx context.Context, userId string) authr.UserInfo {
+	memberIn := us.AuthorizationService.GetGroupsForUser(ctx, userId)
 	return authr.UserInfo{
 		UserId:      userId,
 		Groups:      memberIn,
-		Permissions: us.getPermissionsForUser(userId),
+		Permissions: us.getPermissionsForUser(ctx, userId),
 		DisplayName: us.getDisplayName(userId),
 	}
 }

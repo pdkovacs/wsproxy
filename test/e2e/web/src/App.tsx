@@ -5,7 +5,7 @@ import "./App.css";
 import { useAppDispatch, useAppSelector } from "./app/hooks";
 import { getUserInfo, getUserList, selectStatus, selectUserInfo } from "./features/user/userSlice";
 import { useEffect, useRef, useState } from "react";
-import { AuthzTests } from "./features/authzTests/AuthzTests";
+import { Msg } from "./features/msg/Msg";
 import { isNil } from "lodash-es";
 import axios from "axios";
 import { AsyncValueStatus } from "./slice-utils";
@@ -28,7 +28,7 @@ const App = () => {
 			<div className="App-body">
 				{
 					userIsLoggedIn
-						? <AuthzTests/>
+						? <Msg/>
 						: <Link href="/login">Login</Link>
 				}
 			</div>

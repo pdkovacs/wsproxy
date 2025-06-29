@@ -59,10 +59,12 @@ func checkBasicAuthentication(options basicConfig, userService services.UserServ
 						logger.Debug().Str("currentUserName", pc.Username).Send()
 						if pc.Username == username && pc.Password == password {
 							userId := username
-							userInfo := userService.GetUserInfo(userId)
+							userInfo := userService.GetUserInfo(c, userId)
 							session.Set(UserKey, SessionData{userInfo})
 							session.Save()
 							authenticated = true
+							augmentedContextLogger := zerolog.Ctx(c.Request.Context()).With().Str("req_user", userId).Logger()
+							c.Request = c.Request.WithContext(augmentedContextLogger.WithContext(c.Request.Context()))
 							break
 						}
 					}

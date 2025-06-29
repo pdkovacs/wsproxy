@@ -11,6 +11,12 @@ vars:
 
 tasks:
   build-ui:
+    sources:
+      - web/src/**/*
+      - ./taskfile.yaml
+    generates:
+      - web/dist/assets/**
+      - web/dist/index.html
     cmds:
     - |
       cd ./web

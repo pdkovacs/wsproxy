@@ -1,13 +1,13 @@
 import React from "react";
 import { Button, TextField } from "@mui/material";
 
-import "./AuthzTests.css";
+import "./Msg.css";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
-import { sayHello, sayHelloToSomeone, selectHelloResult, selectHelloToSomeoneResult } from "./authzTestsSlice";
+import { sayHello, sayHelloToSomeone, selectHelloResult, selectHelloToSomeoneResult } from "./msgSlice";
 import { useState } from "react";
 
-export const AuthzTests = () => {
-	return <div className="authz-tests-container">
+export const Msg = () => {
+	return <div className="msg-tests-container">
 		<SayHello/>
 		<SayHelloToSomeone/>
 	</div>;
@@ -23,7 +23,7 @@ const SayHello = () => {
 		<div className="say-hello-container say-hello">
 			<Button onClick={() => {
 				dispatch(sayHello());
-			}}>Say hello</Button>
+			}}>Say hello to everybody</Button>
 			<div></div>
 			<div className="say-hello-result">{
 				success && <div>{success}</div> ||

@@ -161,9 +161,15 @@ func RequestLogger(unitName string) func(g *gin.Context) {
 	return func(g *gin.Context) {
 		start := time.Now()
 
-		l := logging.Get().With().Str("req_xid", xid.New().String()).Logger()
-
 		r := g.Request
+		l := logging.Get().With().
+			Str("req_xid", xid.New().String()).
+			Str("unit", unitName).
+			Str("req_method", g.Request.Method).
+			Str("req_url", g.Request.URL.RequestURI()).
+			Str("user_agent", g.Request.UserAgent()).
+			Logger()
+		l.Debug().Msg("incoming request starting")
 		g.Request = r.WithContext(l.WithContext(r.Context()))
 
 		lrw := newLoggingResponseWriter(g.Writer)
@@ -174,15 +180,10 @@ func RequestLogger(unitName string) func(g *gin.Context) {
 				lrw.statusCode = http.StatusInternalServerError // ensure that the status code is updated
 				panic(panicVal)                                 // continue panicking
 			}
-			l.
-				Info().
-				Str("unit", unitName).
-				Str("method", g.Request.Method).
-				Str("url", g.Request.URL.RequestURI()).
-				Str("user_agent", g.Request.UserAgent()).
+			l.Info().
 				Int("status_code", lrw.statusCode).
 				Dur("elapsed_ms", time.Since(start)).
-				Msg("incoming request")
+				Msg("incoming request finished")
 		}()
 
 		g.Next()

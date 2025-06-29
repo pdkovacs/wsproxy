@@ -145,7 +145,7 @@ func (scheme *oidcScheme) createHandler() gin.HandlerFunc {
 				if claims.Groups != nil {
 					scheme.userService.UpdateUserInfo(userId, authr.GroupNamesToGroupIDs(claims.Groups))
 				}
-				userInfo := scheme.userService.GetUserInfo(userId)
+				userInfo := scheme.userService.GetUserInfo(c, userId)
 				session.Set(UserKey, SessionData{userInfo})
 				session.Save()
 				c.Abort()

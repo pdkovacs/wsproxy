@@ -1,5 +1,5 @@
 import { createAppSlice } from "../../app/createAppSlice";
-import { postHello, postHelloToSomeone } from "./authzTestsApi";
+import { postMsg, postMsgToSomeone } from "./msgApi";
 
 interface HelloState {
 	readonly success: string;
@@ -21,13 +21,13 @@ const initialState: UserSliceState = {
 	sayHelloToSomeone: initialHelloState()
 };
 
-export const authzTestsSlice = createAppSlice({
-	name: "authzTests",
+export const msgTestsSlice = createAppSlice({
+	name: "msgTests",
 	initialState,
 	reducers: create => ({
 		sayHello: create.asyncThunk(
 			async () => {
-				const response = await postHello();
+				const response = await postMsg();
 				return response.result;
 			},
 			{
@@ -46,7 +46,7 @@ export const authzTestsSlice = createAppSlice({
 		),
 		sayHelloToSomeone: create.asyncThunk(
 			async (toWhom: string) => {
-				const response = await postHelloToSomeone(toWhom);
+				const response = await postMsgToSomeone(toWhom);
 				return response.result;
 			},
 			{
@@ -65,13 +65,13 @@ export const authzTestsSlice = createAppSlice({
 		)
 	}),
 	selectors: {
-		selectHelloResult: authzTests => authzTests.sayHello,
-		selectHelloToSomeoneResult: authzTests => authzTests.sayHelloToSomeone
+		selectHelloResult: msgTests => msgTests.sayHello,
+		selectHelloToSomeoneResult: msgTests => msgTests.sayHelloToSomeone
 	}
 });
 
 export const { sayHello, sayHelloToSomeone } =
-  authzTestsSlice.actions;
+  msgTestsSlice.actions;
 
 export const { selectHelloResult, selectHelloToSomeoneResult } =
-	authzTestsSlice.selectors;
+	msgTestsSlice.selectors;
