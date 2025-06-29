@@ -54,15 +54,19 @@ func checkBasicAuthentication(options basicConfig, userService services.UserServ
 				logger.Debug().Bool("headerCouldBeDecoded", decodeOK).Send()
 				if decodeOK {
 					logger.Debug().Str("username", username).Send()
-					logger.Debug().Int("passwordCredentialsList length", len(options.PasswordCredentialsList)).Send()
+					logger.Debug().Int("passwordCredentialsListLength", len(options.PasswordCredentialsList)).Send()
 					for _, pc := range options.PasswordCredentialsList {
 						logger.Debug().Str("currentUserName", pc.Username).Send()
 						if pc.Username == username && pc.Password == password {
+							logger.Debug().Msg("password matches")
 							userId := username
-							userInfo := userService.GetUserInfo(userId)
+							userInfo := userService.GetUserInfo(c, userId)
+							logger.Debug().Interface("userInfo", userInfo)
 							session.Set(UserKey, SessionData{userInfo})
 							session.Save()
 							authenticated = true
+							augmentedContextLogger := zerolog.Ctx(c.Request.Context()).With().Str("req_user", userId).Logger()
+							c.Request = c.Request.WithContext(augmentedContextLogger.WithContext(c.Request.Context()))
 							break
 						}
 					}

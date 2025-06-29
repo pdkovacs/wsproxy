@@ -11,6 +11,12 @@ vars:
 
 tasks:
   build-ui:
+    sources:
+      - web/src/**/*
+      - ./taskfile.yaml
+    generates:
+      - web/dist/assets/**
+      - web/dist/index.html
     cmds:
     - |
       cd ./web
@@ -26,7 +32,7 @@ tasks:
     - rm -rf "app/{{.UI_DIST}}" || echo "No files to remove in app/{{.UI_DIST}}"
     - cp -r {{.UI_DIST}} app/{{.UI_DIST}}
     - task: build-app
-  run_app:
+  run-app:
     cmds:
     - |
       mkdir -p $(dirname {{.DEV_LOG_FILE}})
@@ -42,7 +48,7 @@ tasks:
         ./app/cmd/app \
         --authentication-type basic \
         --password-credentials "$(cat pwfile)" \
-        --users-by-roles '{"users": ["peter.dunay.kovacs@gmail.com", "user1", "user2", "user3"]}' |
+        --users-by-roles '{"users": ["peter.dunay.kovacs@gmail.com", "user1", "user2", "user3"]}' 2>&1 |
         tee {{.DEV_LOG_FILE}}
   build-client-device:
     cmds:

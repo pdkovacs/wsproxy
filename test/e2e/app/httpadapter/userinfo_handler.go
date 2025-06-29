@@ -82,7 +82,7 @@ func userInfoHandler(authType authn.AuthenticationScheme, userService services.U
 		if userId == "" {
 			userInfo = usession.UserInfo
 		} else {
-			userInfo = userService.GetUserInfo(userId)
+			userInfo = userService.GetUserInfo(g, userId)
 		}
 		if logger.GetLevel() == zerolog.DebugLevel {
 			logger.Debug().Interface("user-info", userInfo).Msg("user info reetrieved")

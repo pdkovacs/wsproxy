@@ -1,19 +1,21 @@
 package services
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"wsproxy/internal/logging"
 	"wsproxy/test/e2e/app/config"
 	"wsproxy/test/e2e/app/security/authr"
 
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 )
 
 type UsersByGroups map[authr.GroupID][]string
 
 type AuthorizationService interface {
 	GetUsers() config.UsersByRoles
-	GetGroupsForUser(userID string) []authr.GroupID
+	GetGroupsForUser(ctx context.Context, userID string) []authr.GroupID
 	GetPermissionsForGroup(group authr.GroupID) []authr.PermissionID
 	GetPermissionsForGroups(group []authr.GroupID) []authr.PermissionID
 	UpdateUser(userId string, groups []authr.GroupID)
@@ -33,8 +35,8 @@ func (as *authRService) GetUsers() config.UsersByRoles {
 	return as.usersByGroups
 }
 
-func (as *authRService) GetGroupsForUser(userID string) []authr.GroupID {
-	return getLocalGroupsFor(userID, as.usersByGroups)
+func (as *authRService) GetGroupsForUser(ctx context.Context, userID string) []authr.GroupID {
+	return getLocalGroupsFor(ctx, userID, as.usersByGroups)
 }
 
 func (as *authRService) GetPermissionsForGroup(group authr.GroupID) []authr.PermissionID {
@@ -58,13 +60,15 @@ func (as *authRService) UpdateUser(userId string, groups []authr.GroupID) {
 	}
 }
 
-func getLocalGroupsFor(userID string, usersByGroups map[string][]string) []authr.GroupID {
+func getLocalGroupsFor(ctx context.Context, userID string, usersByGroups map[string][]string) []authr.GroupID {
+	logger := zerolog.Ctx(ctx).With().Str(logging.UnitLogger, "authorization-service").Str(logging.FunctionLogger, "getLocalGroupsFor").Logger()
+	logger.Debug().Str("user_id", userID).Msg("collecting user's group memberships...")
 	groupNames := []string{}
 	for groupName, members := range usersByGroups {
 		if slices.Contains(members, string(userID)) {
 			groupNames = append(groupNames, groupName)
 		}
 	}
-	log.Debug().Str("user_id", userID).Str("group_names", strings.Join(groupNames, ", ")).Msg("user's group memberships collected")
+	logger.Debug().Str("user_id", userID).Str("group_names", strings.Join(groupNames, ", ")).Msg("user's group memberships collected")
 	return authr.GroupNamesToGroupIDs(groupNames)
 }

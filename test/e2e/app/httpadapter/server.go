@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 	wsproxy "wsproxy/internal"
+	"wsproxy/internal/app_errors"
 	"wsproxy/internal/logging"
 	"wsproxy/test/e2e/app/config"
 	"wsproxy/test/e2e/app/security/authn"
@@ -86,41 +87,6 @@ func (s *server) Start(options config.Options, ready func(port int, stop func())
 	s.start(options.ServerPort, r, ready)
 }
 
-func (s *server) createSessionStore(options config.Options) (sessions.Store, error) {
-	var store sessions.Store
-	logger := s.logger.With().Str(logging.MethodLogger, "create-session properties").Logger()
-
-	if options.SessionDbName == "" {
-		logger.Info().Msg("Using in-memory session store")
-		store = memstore.NewStore([]byte("secret"))
-	} else if len(options.DynamodbURL) > 0 {
-		panic("DynamoDB session store is not supported yet")
-	} else if len(options.DBHost) > 0 {
-		logger.Info().Str("database", options.SessionDbName).Msg("connecting to session store")
-		connProps := config.CreateDbProperties(s.configuration, logger)
-		connStr := fmt.Sprintf(
-			"postgres://%s:%s@%s:%d/%s?sslmode=disable",
-			connProps.User,
-			connProps.Password,
-			connProps.Host,
-			connProps.Port,
-			options.SessionDbName,
-		)
-		sessionDb, openSessionDbErr := sql.Open("pgx", connStr)
-		if openSessionDbErr != nil {
-			return store, openSessionDbErr
-		}
-		sessionDb.Ping()
-		var createDbSessionStoreErr error
-		store, createDbSessionStoreErr = postgres.NewStore(sessionDb, []byte("secret"))
-		if createDbSessionStoreErr != nil {
-			return store, createDbSessionStoreErr
-		}
-	}
-
-	return store, nil
-}
-
 func (s *server) initEndpoints(options config.Options) *gin.Engine {
 	logger := s.logger.With().Str(logging.MethodLogger, "server:initEndpoints").Logger()
 	authorizationService := services.NewAuthorizationService(options)
@@ -178,65 +144,126 @@ func (s *server) initEndpoints(options config.Options) *gin.Engine {
 			authorizedGroup.GET("/backdoor/authentication", HandleGetIntoBackdoorRequest())
 		}
 
-		ws := authorizedGroup.Group("/ws")
-		ws.GET(string(wsproxy.ConnectPath), func(g *gin.Context) {
-			logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS connect handler").Logger()
-			req := g.Request
-			res := g
-			cred, hasCredHeader := req.Header["Authorization"]
-			logger.Debug().Msgf("Request has authorization header: %v and it is: %s", hasCredHeader, cred)
-			if !hasCredHeader {
-				_ = res.AbortWithError(500, errors.New("authorization header not found"))
-				return
-			}
-			if cred[0] == BadCredential {
-				_ = res.AbortWithError(401, errors.New("bad credentials in Authorization header"))
-				return
-			}
+		apiGroup := authorizedGroup.Group("/api")
+		{
+			apiGroup.POST("/message", func(g *gin.Context) {
+				logger := zerolog.Ctx(g.Request.Context()).With().Str(logging.MethodLogger, "WS connect handler").Logger()
 
-			connHeaderKey := wsproxy.ConnectionIDHeaderKey
-			if connId := req.Header.Get(connHeaderKey); connId != "" {
-				logger.Info().Str(wsproxy.ConnectionIDKey, connId).Str("connid", connId).Msg("Incoming connection request...")
-				res.Status(200)
-				return
-			}
-
-			res.Status(200)
-		})
-
-		ws.POST(string(wsproxy.DisonnectedPath), func(g *gin.Context) {
-			logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS disconnection handler").Logger()
-			req := g.Request
-			res := g
-
-			connHeaderKey := wsproxy.ConnectionIDHeaderKey
-			if connId := req.Header.Get(connHeaderKey); connId != "" {
-				logger.Error().Str(wsproxy.ConnectionIDKey, connId).Str("connid", connId).Msg("Disconnect requested")
-				res.Status(200)
-				return
-			}
-		})
-
-		ws.POST(string(wsproxy.MessagePath), func(g *gin.Context) {
-			logger := zerolog.Ctx(g.Request.Context()).With().Str("method", "WS message handler").Logger()
-			req := g.Request
-			connHeaderKey := wsproxy.ConnectionIDHeaderKey
-			if connId := req.Header.Get(connHeaderKey); connId != "" {
-				bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
-				req.Body.Close()
-				if readBodyErr != nil {
-					logger.Error().Err(readBodyErr).Send()
+				body, errReadBody := io.ReadAll(g.Request.Body)
+				if errReadBody != nil {
+					logger.Error().Err(errReadBody).Msg("failed to read request body")
+					g.AbortWithStatus(http.StatusBadRequest)
+					return
+				}
+				var messageIn services.Message
+				errMessageUnmarshal := json.Unmarshal(body, &messageIn)
+				if errMessageUnmarshal != nil {
+					logger.Error().Err(errMessageUnmarshal).Msg("failed to unmarshal request body into services.Message")
+					g.AbortWithStatus(http.StatusBadRequest)
 					return
 				}
 
-				message := parseMessageJSON(bodyAsBytes)
-				logger.Debug().Str(wsproxy.ConnectionIDKey, connId).Any("message", message).Msg("message received")
-			}
-		})
+				errProcessMessage := services.ProcessMessage(g.Request.Context(), messageIn, userService)
+				if errProcessMessage != nil {
+					logger.Error().Err(errProcessMessage).Msg("failed to process message")
+					var badRequest *app_errors.BadRequest
+					if errors.As(errProcessMessage, &badRequest) {
+						g.AbortWithStatusJSON(http.StatusBadRequest, badRequest.Error())
+						return
+					}
+					g.AbortWithStatus(http.StatusInternalServerError)
+					return
+				}
 
+				g.Status(http.StatusOK)
+			})
+		}
+
+		wsGroup := authorizedGroup.Group("/ws")
+		{
+			wsGroup.GET(string(wsproxy.ConnectPath), func(g *gin.Context) {
+				logger := zerolog.Ctx(g.Request.Context()).With().Str(logging.MethodLogger, "WS connect handler").Logger()
+				req := g.Request
+				res := g
+
+				connHeaderKey := wsproxy.ConnectionIDHeaderKey
+				if connId := req.Header.Get(connHeaderKey); connId != "" {
+					logger.Info().Str(wsproxy.ConnectionIDKey, connId).Str("connid", connId).Msg("Incoming connection request...")
+					res.Status(http.StatusOK)
+					return
+				}
+
+				res.Status(http.StatusOK)
+			})
+
+			wsGroup.POST(string(wsproxy.DisonnectedPath), func(g *gin.Context) {
+				logger := zerolog.Ctx(g.Request.Context()).With().Str(logging.MethodLogger, "WS disconnection handler").Logger()
+				req := g.Request
+				res := g
+
+				connHeaderKey := wsproxy.ConnectionIDHeaderKey
+				if connId := req.Header.Get(connHeaderKey); connId != "" {
+					logger.Error().Str(wsproxy.ConnectionIDKey, connId).Str("connid", connId).Msg("Disconnect requested")
+					res.Status(http.StatusOK)
+					return
+				}
+			})
+
+			wsGroup.POST(string(wsproxy.MessagePath), func(g *gin.Context) {
+				logger := zerolog.Ctx(g.Request.Context()).With().Str(logging.MethodLogger, "WS message handler").Logger()
+				req := g.Request
+				connHeaderKey := wsproxy.ConnectionIDHeaderKey
+				if connId := req.Header.Get(connHeaderKey); connId != "" {
+					bodyAsBytes, readBodyErr := io.ReadAll(req.Body)
+					req.Body.Close()
+					if readBodyErr != nil {
+						logger.Error().Err(readBodyErr).Send()
+						return
+					}
+
+					message := parseMessageJSON(bodyAsBytes)
+					logger.Debug().Str(wsproxy.ConnectionIDKey, connId).Any("message", message).Msg("message received")
+				}
+			})
+		}
 	}
 
 	return rootEngine
+}
+
+func (s *server) createSessionStore(options config.Options) (sessions.Store, error) {
+	var store sessions.Store
+	logger := s.logger.With().Str(logging.MethodLogger, "create-session properties").Logger()
+
+	if options.SessionDbName == "" {
+		logger.Info().Msg("Using in-memory session store")
+		store = memstore.NewStore([]byte("secret"))
+	} else if len(options.DynamodbURL) > 0 {
+		panic("DynamoDB session store is not supported yet")
+	} else if len(options.DBHost) > 0 {
+		logger.Info().Str("database", options.SessionDbName).Msg("connecting to session store")
+		connProps := config.CreateDbProperties(s.configuration, logger)
+		connStr := fmt.Sprintf(
+			"postgres://%s:%s@%s:%d/%s?sslmode=disable",
+			connProps.User,
+			connProps.Password,
+			connProps.Host,
+			connProps.Port,
+			options.SessionDbName,
+		)
+		sessionDb, openSessionDbErr := sql.Open("pgx", connStr)
+		if openSessionDbErr != nil {
+			return store, openSessionDbErr
+		}
+		sessionDb.Ping()
+		var createDbSessionStoreErr error
+		store, createDbSessionStoreErr = postgres.NewStore(sessionDb, []byte("secret"))
+		if createDbSessionStoreErr != nil {
+			return store, createDbSessionStoreErr
+		}
+	}
+
+	return store, nil
 }
 
 // Stop kills the listener

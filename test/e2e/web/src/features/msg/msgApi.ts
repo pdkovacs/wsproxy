@@ -1,21 +1,19 @@
 import type { AxiosError } from "axios";
 import axios from "axios";
-import { isNil } from "lodash-es";
 
-export const postHello = async (): Promise<{result: string}> => {
-	return postHelloToSomeone(null);
+export const postMsg = async (): Promise<{result: string}> => {
+	return postMsgToSomeone(null);
 };
 
-export const postHelloToSomeone = async (whom: string|null): Promise<{result: string}> => {
+export const postMsgToSomeone = async (whom: string|null, what: string = "hello"): Promise<{result: string}> => {
 	try {
 		const response = await axios({
 			method: "POST",
-			url: "/api/hello",
-			data: isNil(whom)
-				? undefined
-				: {
-					whom
-				}
+			url: "/api/message",
+			data: {
+				whom,
+				what
+			}
 		});
 		return {result: response.data.whom};
 	} catch (err) {
